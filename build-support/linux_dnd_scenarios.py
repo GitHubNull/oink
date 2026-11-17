@@ -143,6 +143,8 @@ def return_reenter(source, catcher, gets=0):
 
 def cleanup_source(source, cancel, gets, returned=1):
     wait(source, lambda r: r['end'] == 1, 'native drag end')
+    # GTK's asynchronous ungrab bookkeeping can outlive drag-end and XSync.
+    wait(source, lambda r: r['toolkit_grabbed'] == 0, 'toolkit grab release', seconds=.5)
     report = source.command(FREE)
     if cancel:
         exact(report, failed=1, cancelled=1, button=1, up=0)

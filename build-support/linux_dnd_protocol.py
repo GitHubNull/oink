@@ -15,7 +15,7 @@ FIELDS = ("gen xid x y source_xid owner epoch armed begin end failed cancelled g
           "motions visits leaves inside held_checks returned free_checks selected "
           "button length hash pending stale slow_requests slow_sent slow_abandoned "
           "clip_owner clip_checks clip_bad digest0 digest1 digest2 digest3 "
-          "digest4 digest5 digest6 digest7").split()
+          "digest4 digest5 digest6 digest7 toolkit_grabbed").split()
 (STATUS, ARM, FOCUS, MOVE, DOWN, UP, ESCAPE, HELD, FREE, READ_SELECTION, LOAD,
  CLIP_CHECK, DELAY, DISARM, QUIT, RETURNED, FETCH, ORPHAN_UP) = range(18)
 

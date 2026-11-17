@@ -1,4 +1,5 @@
-#include "linux_dnd_roles.h"
+#define _POSIX_C_SOURCE 200809L
+#include "linux_dnd_native.h"
 #include <sys/stat.h>
 
 Display *inject, *observer;
@@ -88,7 +89,7 @@ void native_poll(void) {
                           &rx, &ry, &wx, &wy, &mask), "query private pointer");
     r.button = !!(mask & Button1Mask);
     r.owner = XGetSelectionOwner(inject, selection_atom);
-    if (source_context) r.selected = gdk_drag_context_get_selected_action(source_context);
+    toolkit_poll();
 }
 
 void pointer_at_source(void) {
@@ -105,22 +106,14 @@ void held_context(unsigned long allowed_get) {
     require(is_source && r.begin == 1 && r.end == 0 && r.failed == 0 && r.get == allowed_get
             && r.down == 1 && r.up == 0 && r.raw_down == 1 && r.raw_up == 0 && r.button,
             "one uninterrupted real source drag");
-    /* This assertion is deliberately SOURCE-LOCAL, never used in a destination. */
-    require(source_context && gtk_drag_get_source_widget(source_context) == box
-            && GDK_WINDOW_XID(gdk_drag_context_get_source_window(source_context)) == r.source_xid,
-            "original live source context and window");
-    GdkDevice *device = gdk_drag_context_get_device(source_context);
-    require(gdk_x11_device_get_id(device) == pointer_id
-            && gdk_display_device_is_grabbed(gdk_display_get_default(), device), "GTK source owns grab");
+    toolkit_held(pointer_id);
     require(try_grab(pointer_id, false) == AlreadyGrabbed, "native grab cannot be stolen");
     require(r.owner == r.source_xid, "live XdndSelection owner");
     r.held_checks++;
 }
 
 void no_grab(void) {
-    if (source_context)
-        require(!gdk_display_device_is_grabbed(gdk_display_get_default(),
-                    gdk_drag_context_get_device(source_context)), "GTK released grab");
+    toolkit_released();
     require(try_grab(pointer_id, false) == GrabSuccess
             && try_grab(keyboard_id, true) == GrabSuccess, "no ghost pointer or keyboard grab");
     r.free_checks++;

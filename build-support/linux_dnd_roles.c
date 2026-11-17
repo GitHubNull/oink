@@ -62,6 +62,29 @@ void report(unsigned long seq, unsigned long status) {
     flush_output();
 }
 
+void toolkit_poll(void) {
+    if (source_context) {
+        r.selected = gdk_drag_context_get_selected_action(source_context);
+        r.toolkit_grabbed = gdk_display_device_is_grabbed(gdk_display_get_default(),
+                               gdk_drag_context_get_device(source_context));
+    }
+}
+
+void toolkit_held(int pointer_id) {
+    require(source_context && gtk_drag_get_source_widget(source_context) == box
+            && GDK_WINDOW_XID(gdk_drag_context_get_source_window(source_context)) == r.source_xid,
+            "original live source context and window");
+    GdkDevice *device = gdk_drag_context_get_device(source_context);
+    require(gdk_x11_device_get_id(device) == pointer_id
+            && gdk_display_device_is_grabbed(gdk_display_get_default(), device), "GTK source owns grab");
+}
+
+void toolkit_released(void) {
+    if (source_context)
+        require(!gdk_display_device_is_grabbed(gdk_display_get_default(),
+                    gdk_drag_context_get_device(source_context)), "GTK released grab");
+}
+
 static gboolean pressed(GtkWidget *widget, GdkEventButton *event, gpointer data) {
     (void)widget; (void)data;
     if (event->button == 1 && event->type == GDK_BUTTON_PRESS) r.press++;

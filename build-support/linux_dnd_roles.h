@@ -20,19 +20,7 @@
  * -> proxy LOAD only). Target has no payload input command. No product transport.
  * Every process has a 90-second hard lifetime and nonblocking stdin/stdout.
  */
-#define PAYLOAD_MAX 128
-#define LINE_MAXIMUM 2048
-#define FIELDS(X) \
- X(gen) X(xid) X(x) X(y) X(source_xid) X(owner) X(epoch) X(armed) \
- X(begin) X(end) X(failed) X(cancelled) X(get) X(received) X(drop) X(deleted) \
- X(press) X(down) X(up) X(raw_down) X(raw_up) X(key_down) X(key_up) \
- X(motions) X(visits) X(leaves) X(inside) X(held_checks) X(returned) X(free_checks) \
- X(selected) X(button) X(length) X(hash) X(pending) X(stale) X(slow_requests) \
- X(slow_sent) X(slow_abandoned) X(clip_owner) X(clip_checks) X(clip_bad) \
- X(digest0) X(digest1) X(digest2) X(digest3) X(digest4) X(digest5) X(digest6) X(digest7)
-#define DECLARE(name) unsigned long name;
-struct Report { FIELDS(DECLARE) };
-#undef DECLARE
+#include "linux_dnd_native.h"
 extern struct Report r;
 extern GtkWidget *window, *box;
 extern GdkDragContext *source_context, *incoming_context;
@@ -47,11 +35,6 @@ extern Window expected_source;
 extern unsigned long pending_epoch, pending_gen;
 extern GdkDragContext *pending_context;
 
-enum Command {
-    STATUS, ARM, FOCUS, MOVE, DOWN, UP, ESCAPE, HELD, FREE,
-    READ_SELECTION, LOAD, CLIP_CHECK, DELAY, DISARM, QUIT, RETURNED,
-    FETCH, ORPHAN_UP
-};
 void require(bool condition, const char *message);
 void require_isolated(void);
 void emit(const char *format, ...) G_GNUC_PRINTF(1, 2);

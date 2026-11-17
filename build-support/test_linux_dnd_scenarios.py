@@ -137,7 +137,7 @@ class FramingTests(unittest.TestCase):
                 protocol.decode(frame)
 
     def test_c_and_python_report_and_opcode_order_match(self):
-        header = Path(__file__).with_name('linux_dnd_roles.h').read_text()
+        header = Path(__file__).with_name('linux_dnd_wire.h').read_text()
         field_block = header.split('#define FIELDS(X)', 1)[1].split('#define DECLARE', 1)[0]
         self.assertEqual(re.findall(r'X\((\w+)\)', field_block), protocol.FIELDS)
         commands = header.split('enum Command {', 1)[1].split('};', 1)[0]
