@@ -24,10 +24,13 @@
 
 ## 索引
 
+当前续作入口：[第三轮：Qt 夹具验收后续作](2026-11-17-linux-x11-phase2-qt-continuation.md)。前两轮保持历史快照；本机已改用项目内 Qt6/XRes，无需照旧交接安装全局 Qt5。
+
 | 日期 | 范围 | 文档 | 状态 |
 |---|---|---|---|
 | 2026-11-17 | Linux X11 桌面完整适配 | [2026-11-17-linux-x11-port.md](2026-11-17-linux-x11-port.md) | 进行中：机制探针大部分通过；产品实现未开始 |
 | 2026-11-17 | Linux X11 阶段 2 机制门槛（第二轮） | [2026-11-17-linux-x11-phase2-continuation.md](2026-11-17-linux-x11-phase2-continuation.md) | 进行中：GTK DnD/输入矩阵/音频 route+restart 通过；Qt/真实应用/文件载荷/INCR/重连/FUSE/硬件仍缺；产品未开始 |
+| 2026-11-17 | Linux X11 阶段 2 Qt 夹具验收后续作（第三轮） | [2026-11-17-linux-x11-phase2-qt-continuation.md](2026-11-17-linux-x11-phase2-qt-continuation.md) | 本机 Qt/GTK 文本矩阵与抓取清理已验收，代码 2d2061a 已推送；依赖获取入口及 B–F 未完成，阶段 2 未通过，产品未开始 |
 
 ## 长期计划
 

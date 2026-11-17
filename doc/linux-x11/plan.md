@@ -249,3 +249,10 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - GTK根因实证：保留原失败断言的临时诊断 `gtk-grab-diagnostic-4.log` 记录 `end=1 button=1 server_grab=0 cache_before=1 cache_sync=1 cache_dispatch=0 rounds=3`；server_grab=0是独立XIGrab主动检查成功并立即释放，不是只读查询。对应GTK 3.24.41实现中，ungrab请求后还须异步roundtrip及idle回调删除GDK grab记录，`drag-end`与`gdk_display_sync`均不是其完成屏障。故增加报告字段 `toolkit_grabbed`，在End后至多等待500ms的真实toolkit状态归零，再执行原GTK断言及pointer/keyboard原生抓取检查；不发ButtonUp促成释放，不主动释放GTK grab，不嵌套泵事件。临时诊断已移除。4项离线时序回归先红（`gtk-cleanup-red.log`），涵盖延迟状态、永久占用、缺证据和原生抓取失败；聚焦DnD套件随后通过（`gtk-cleanup-green.log`）。最终原生验收结果见下条。
 - 最终验收：`gtk-build-cleanup-final.log`、`qt-build-cleanup-final.log`严格零告警重建，产物mtime晚于全部输入源码；`gtk-cleanup-final-1.log`至`gtk-cleanup-final-5.log`连续五轮各8个旧GTK场景通过（40次），随后 `qt-matrix-wave-a-final.log`的8个Qt混合场景及7个坏控制帧全部通过。六份日志均逐一核验唯一汇总、`probe_exit=result=remaining_mounts=0`及services/cleanup/mount检查true；Qt九组正常退出记录（含截图组）均exit0且无stderr。最终私有截图 `qt-fixture-final.png` 已实际查看。`linux-unit-wave-a-verified.log`完整210项通过、`deps-wave-a-verified.log`本地依赖检查通过、bash语法/diff空白/所有变更源码≤500行通过；独立静态复核未发现时序修复阻断项。
 - 本机Qt原生夹具验收完成；新增报告字段后旧二进制与新控制器不可混用，续作须按当前源码重建。可复现依赖获取脚本仍缺，真实应用矩阵/文件目录/INCR/新代恢复/专属master的真实toolkit输入尚未实现；FUSE约定日志仍不存在，物理硬件与真实麦克风仍缺证据。阶段2仍不通过，不进入阶段3–8，未提交/推送/tag/发布。
+
+### 第三轮提交与任务移交（2026-11-17）
+
+- 用户随后明确要求提交、推送到 GitHub 并编写供其他 AI 代理续作的交接文档。代码已提交为 `2d2061a7c01c13e07e43afb15f9dd62ca808c7cd`（`test(linux): validate Qt X11 drag fixtures and asynchronous grab cleanup`），成功推送 `origin/main`；独立 `git ls-remote origin refs/heads/main` 核验同一 SHA，代码推送后工作树干净。上文“未提交”保留为当时快照。
+- 新增 [第三轮自包含交接](../handover/2026-11-17-linux-x11-phase2-qt-continuation.md)，同步交接索引；完整保留 A2/B/C/D/E/F 范围、逐项验收、真实代码缺口、失败/成功证据、限额重建与串行复跑命令。明确旧 Qt5 安装建议已过时、旧报告二进制不可复用、input-matrix 需链接 Xau、依赖和日志仅本机忽略目录存在。
+- 再次核实 `apps/`、`crates/` 自 `d8b2932` 至代码提交无改动；Linux UI 仍拒绝启动，输入/显示/剪贴板仍 Unsupported，音频仍占位。当前不是“产品差一步”，阶段2仍不通过，阶段3–8尚未开始。
+- 本次文档独立提交交付，不改版本、不打 tag、不发布、不改 CI 或系统权限；用户此次提交/推送授权不延伸为后续代理的持续授权。交接前停止实施 B–F，留给下一代理按批准顺序推进。
