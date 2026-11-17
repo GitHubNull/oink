@@ -27,6 +27,7 @@
 | 日期 | 范围 | 文档 | 状态 |
 |---|---|---|---|
 | 2026-11-17 | Linux X11 桌面完整适配 | [2026-11-17-linux-x11-port.md](2026-11-17-linux-x11-port.md) | 进行中：机制探针大部分通过；产品实现未开始 |
+| 2026-11-17 | Linux X11 阶段 2 机制门槛（第二轮） | [2026-11-17-linux-x11-phase2-continuation.md](2026-11-17-linux-x11-phase2-continuation.md) | 进行中：GTK DnD/输入矩阵/音频 route+restart 通过；Qt/真实应用/文件载荷/INCR/重连/FUSE/硬件仍缺；产品未开始 |
 
 ## 长期计划
 

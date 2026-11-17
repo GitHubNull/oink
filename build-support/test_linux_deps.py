@@ -23,6 +23,7 @@ pangocairo fontconfig cairo'''.split()
 COMMANDS = 'cc c++ make cmake curl xz python3 dpkg-deb fusermount3 fc-match'.split()
 NATIVE_COMMANDS = '''Xephyr xauth xdpyinfo xinput metacity dbus-daemon dbus-send
 pipewire pipewire-pulse pactl pacat parec pw-cli pw-cat pw-link pw-dump'''.split()
+TOOLKIT_COMMANDS = ['nemo', 'google-chrome', 'firefox']
 FORBIDDEN = '''chmod chown chgrp setfacl setcap usermod groupmod groupadd gpasswd
 adduser addgroup mknod mount umount xhost systemctl service udevadm apt dpkg'''.split()
 FUSE_ERROR = '当前用户无法读写 /dev/fuse；请检查系统配置，本脚本不会放宽设备权限。'
@@ -73,7 +74,7 @@ class LinuxDepsTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.root / 'commands.jsonl'
         for name in ['uname', 'dpkg-query', 'pkg-config', 'apt-get', 'sudo',
-                     *COMMANDS, *NATIVE_COMMANDS, *FORBIDDEN]:
+                     *COMMANDS, *NATIVE_COMMANDS, *TOOLKIT_COMMANDS, *FORBIDDEN]:
             tool = self.bin / name
             tool.write_text(f'#!{sys.executable} -I\n' + STUB, encoding='utf-8')
             tool.chmod(0o700)  # Only temporary fixtures, never device permissions.
@@ -112,8 +113,8 @@ class LinuxDepsTests(unittest.TestCase):
         self.assertEqual(self.calls_for('apt-get'), [])
         self.assertEqual(self.calls_for('sudo'), [])
 
-    def assert_packages(self, native=False):
-        expected = PACKAGES + (NATIVE_PACKAGES if native else [])
+    def assert_packages(self, native=False, toolkit=False):
+        expected = PACKAGES + (NATIVE_PACKAGES if native else []) + (['qtbase5-dev', 'nemo'] if toolkit else [])
         self.assertEqual(self.calls_for('dpkg-query'),
                          [['-W', '-f=${db:Status-Status}', name] for name in expected])
 
@@ -123,9 +124,10 @@ class LinuxDepsTests(unittest.TestCase):
         self.assertIn('缺少系统包：\n', result.stdout)
         self.assertNotIn(SUCCESS, result.stdout)
 
-    def assert_checked(self, result, errors=()):
+    def assert_checked(self, result, errors=(), toolkit=False):
+        expected_modules = MODULES + (['Qt5Widgets'] if toolkit else [])
         self.assertEqual(self.calls_for('pkg-config'),
-                         [['--modversion', name] for name in MODULES])
+                         [['--modversion', name] for name in expected_modules])
         expected = list(errors) + ([] if self.fuse_ok else [FUSE_ERROR])
         self.assertEqual(result.stderr.splitlines(), expected)
         self.assertEqual(result.returncode, int(bool(expected)), result)
@@ -252,6 +254,37 @@ class LinuxDepsTests(unittest.TestCase):
                 self.assert_missing(result, ['libxi-dev'])
                 self.assert_install(['libxi-dev'], update_only=stage == 'update')
                 self.assertEqual(self.calls_for('pkg-config'), [])
+
+    def test_toolkit_dependencies_are_opt_in(self):
+        for name in TOOLKIT_COMMANDS:
+            (self.bin / name).unlink()
+        result = self.run_script('--native-tests', statuses={'qtbase5-dev': 'absent', 'nemo': 'absent'},
+                                 missing_modules=['Qt5Widgets'])
+        self.assert_packages(native=True)
+        self.assert_checked(result)
+
+    def test_toolkit_missing_packages_preserve_both_flags(self):
+        result = self.run_script('--native-tests', '--toolkit-tests',
+                                 statuses={'qtbase5-dev': 'absent'})
+        self.assertEqual(result.returncode, 1)
+        self.assert_packages(native=True, toolkit=True)
+        self.assert_missing(result, ['qtbase5-dev'])
+        self.assertIn('--install --native-tests --toolkit-tests', result.stdout + result.stderr)
+
+    def test_toolkit_checks_widgets_and_app_commands_without_launching(self):
+        result = self.run_script('--toolkit-tests')
+        self.assert_packages(toolkit=True)
+        self.assert_checked(result, toolkit=True)
+        self.assert_no_install()
+
+    def test_toolkit_missing_module_and_apps_fail_without_installing_browser(self):
+        for name in TOOLKIT_COMMANDS:
+            (self.bin / name).unlink()
+        result = self.run_script('--install', '--toolkit-tests', missing_modules=['Qt5Widgets'])
+        self.assert_packages(toolkit=True)
+        self.assert_checked(result, ['缺少开发模块：Qt5Widgets',
+                                     *[f'缺少命令：{name}' for name in TOOLKIT_COMMANDS]], toolkit=True)
+        self.assert_no_install()
 
     @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'Root does not use sudo')
     def test_sudo_denial_propagates_without_running_apt(self):

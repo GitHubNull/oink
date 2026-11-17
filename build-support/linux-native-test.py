@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import secrets
 import select
 import shutil
@@ -185,6 +186,20 @@ class Session:
                  input=f'add {display} MIT-MAGIC-COOKIE-1 {cookie}\nremove :999\n')
         self.wait_ready(lambda: self.run(['xdpyinfo'], timeout=1))
 
+    def block_host_input(self):
+        # Xephyr otherwise forwards real host input into synthetic-only probes.
+        for name in ('Xephyr virtual keyboard', 'Xephyr virtual mouse'):
+            device = self.run(['xinput', 'list', '--id-only', name]).stdout.strip()
+            if not device.isascii() or not device.isdecimal():
+                raise RuntimeError('Cannot uniquely identify private Xephyr input device')
+            actual = self.run(['xinput', 'list', '--name-only', device]).stdout.strip()
+            if actual != name:
+                raise RuntimeError('Refusing to disable an unexpected private input device')
+            self.run(['xinput', 'disable', device])
+            properties = self.run(['xinput', 'list-props', device]).stdout
+            if not re.search(r'^\s*Device Enabled \(\d+\):\s*0\s*$', properties, re.MULTILINE):
+                raise RuntimeError('Private Xephyr host-input forwarding is still enabled')
+
     def start_dbus(self):
         self.start('dbus', ['dbus-daemon', '--session', '--nofork',
                    '--address=' + self.env['DBUS_SESSION_BUS_ADDRESS']])
@@ -194,7 +209,7 @@ class Session:
 
     def start_audio(self):
         config = Path(self.env['PIPEWIRE_CONFIG_DIR'])
-        config.mkdir(mode=0o700)
+        config.mkdir(mode=0o700, exist_ok=True)
         (config / 'pipewire.conf').write_text(PIPEWIRE_CONFIG)
         (config / 'client.conf').write_text(CLIENT_CONFIG)
         socket = self.root / 'runtime' / 'pulse-native'
@@ -274,47 +289,81 @@ def interrupt(_signum, _frame):
 def isolated_run(args):
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     root = Path(tempfile.mkdtemp(prefix='oink-native-', dir='/tmp'))
+    roots, sessions, environments = [root], [], []
     host = os.environ.copy()
-    session = None
-    result = 1
+    result, probe_exit = 1, None
+    services_ok, cleanup_ok, mount_check_ok = False, True, True
+    remaining = []
     try:
-        env = private_environment(root, host)
-        session = Session(root, env)
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, interrupt)
-        session.start_x11(host)
-        session.start_dbus()
-        session.start('metacity', ['metacity', '--sm-disable'])
-        session.start_audio()
-        session.require_alive()
-        print(f'Isolated native environment: DISPLAY={env["DISPLAY"]}, root={root}', flush=True)
-        result = session.execute(args.command, args.timeout)
-        for name, process in session.processes:
-            if name != 'probe' and process.poll() is not None:
-                raise RuntimeError(f'Private service {name} exited during the probe')
+        for index in range(2 if args.peer_x11 else 1):
+            if index:
+                roots.append(Path(tempfile.mkdtemp(prefix='oink-native-', dir='/tmp')))
+            env = private_environment(roots[index], host)
+            session = Session(roots[index], env)
+            sessions.append(session)
+            environments.append(env)
+            session.start_x11(host)
+            if any(previous['DISPLAY'] == env['DISPLAY'] for previous in environments[:-1]):
+                raise RuntimeError('Peer X11 servers must have distinct displays')
+            session.block_host_input()
+            session.start_dbus()
+            session.start('metacity', ['metacity', '--sm-disable'])
+            session.start_audio()
+            session.require_alive()
+            print(f'Isolated native environment: DISPLAY={env["DISPLAY"]}, root={roots[index]}', flush=True)
+        if args.peer_x11:
+            peer = root / 'peer-environment.json'
+            fd = os.open(peer, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w') as output:
+                json.dump(environments[1], output)
+            environments[0]['OINK_NATIVE_TEST_PEER_ENV'] = str(peer)
+        probe_exit = sessions[0].execute(args.command, args.timeout)
+        result = probe_exit
+        for session in sessions:
+            for name, process in session.processes:
+                if name != 'probe' and process.poll() is not None:
+                    raise RuntimeError(f'Private service {name} exited during the probe')
+        services_ok = True
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f'Native test failed: {error}', file=sys.stderr)
         result = 1
     finally:
-        if session:
+        for session in reversed(sessions):
             try:
                 session.close()
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'Native test cleanup failed: {error}', file=sys.stderr)
+                cleanup_ok = False
                 result = 1
-        try:
-            mounts = mounts_below(root)
-        except OSError as error:
-            print(f'Cannot verify remaining mounts: {error}', file=sys.stderr)
-            mounts = []
+        for directory in roots:
+            try:
+                remaining.extend(mounts_below(directory))
+            except OSError as error:
+                print(f'Cannot verify remaining mounts: {error}', file=sys.stderr)
+                mount_check_ok = False
+                result = 1
+        if remaining:
+            print('Active mounts remain; refusing recursive deletion.', file=sys.stderr)
+            cleanup_ok = False
             result = 1
-        if args.keep or result != 0 or mounts:
-            print(f'Private test artifacts retained: {root}', file=sys.stderr)
-            if mounts:
-                print('Active mounts remain; refusing recursive deletion.', file=sys.stderr)
-                result = 1
-        else:
-            shutil.rmtree(root)
+        for directory in roots:
+            if args.keep or result != 0:
+                print(f'Private test artifacts retained: {directory}', file=sys.stderr)
+            else:
+                try:
+                    shutil.rmtree(directory)
+                except OSError as error:
+                    print(f'Private artifact cleanup failed: {directory}: {error}', file=sys.stderr)
+                    cleanup_ok = False
+                    result = 1
+        print('native_test_summary=' + json.dumps({
+            'probe_exit': probe_exit, 'services_ok': services_ok,
+            'cleanup_ok': cleanup_ok, 'mount_check_ok': mount_check_ok,
+            'remaining_mounts': len(remaining), 'sessions': len(sessions),
+            'result': result,
+        }, sort_keys=True), flush=True)
     return result
 
 
@@ -322,6 +371,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--keep', action='store_true', help='Keep private logs and fixtures')
+    parser.add_argument('--peer-x11', action='store_true', help='Start a second isolated peer session')
     parser.add_argument('--inside-scope', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()

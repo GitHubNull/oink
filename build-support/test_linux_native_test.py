@@ -337,7 +337,7 @@ class IsolatedRunTests(SafeCase):
         root = self.new_root()
         session = mock.Mock(processes=[])
         session.execute.return_value = result
-        args = argparse.Namespace(command=['fake', '--arg'], timeout=9, keep=keep)
+        args = argparse.Namespace(command=['fake', '--arg'], timeout=9, keep=keep, peer_x11=False)
         with ExitStack() as stack:
             stack.enter_context(mock.patch.dict(runner.os.environ, HOST, clear=True))
             stack.enter_context(mock.patch.object(runner.tempfile, 'mkdtemp', return_value=str(root)))

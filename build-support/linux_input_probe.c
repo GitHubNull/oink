@@ -240,6 +240,8 @@ int main(void) {
     struct Counts own_raw = collect(capture, 100);
     printf("dedicated_master: core_keys=%d raw_keys=%d source=%d expected_source=%d\n",
            own_core.core_keys, own_raw.raw_keys, own_raw.source, own_xtest);
+    require(own_core.core_keys == 2 && own_raw.raw_keys == 2,
+            "core target receives both dedicated-master key transitions");
     require(own_raw.source == own_xtest && own_raw.source != baseline_capture.source,
             "dedicated master identifies its own injection source");
 

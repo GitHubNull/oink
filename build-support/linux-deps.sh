@@ -3,20 +3,23 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' \
-        '用法：bash build-support/linux-deps.sh [--check | --install] [--native-tests]' \
+        '用法：bash build-support/linux-deps.sh [--check | --install] [--native-tests] [--toolkit-tests]' \
         '默认仅检查，不安装、不修改系统。' \
         '--install 安装缺失的系统依赖，需要用户在终端确认 sudo。' \
         '--native-tests 同时检查隔离原生测试工具。' \
+        '--toolkit-tests 另检查 Qt5 Widgets、Nemo、Chrome 和 Firefox；不启动应用。' \
         '本脚本不修改 Rust/Node 版本、设备权限、用户组或桌面设置。'
 }
 
 mode=check
 native_tests=false
+toolkit_tests=false
 for arg in "$@"; do
     case "$arg" in
         --check) mode=check ;;
         --install) mode=install ;;
         --native-tests) native_tests=true ;;
+        --toolkit-tests) toolkit_tests=true ;;
         -h|--help) usage; exit 0 ;;
         *) printf '未知参数：%s\n' "$arg" >&2; usage >&2; exit 2 ;;
     esac
@@ -52,6 +55,9 @@ packages=(
 if "$native_tests"; then
     packages+=(xserver-xephyr xauth x11-utils xinput metacity dbus-daemon pipewire pipewire-bin pipewire-pulse pulseaudio-utils)
 fi
+if "$toolkit_tests"; then
+    packages+=(qtbase5-dev nemo)
+fi
 
 missing=()
 for package in "${packages[@]}"; do
@@ -76,6 +82,7 @@ if ((${#missing[@]})); then
     else
         printf '请由用户执行：bash build-support/linux-deps.sh --install'
         if "$native_tests"; then printf ' --native-tests'; fi
+        if "$toolkit_tests"; then printf ' --toolkit-tests'; fi
         printf '\n' >&2
         exit 1
     fi
@@ -86,6 +93,9 @@ modules=(
     x11 xi xtst xrandr xfixes xrender xext xkbcommon xkbcommon-x11
     alsa libpulse fuse3 pangocairo fontconfig cairo
 )
+if "$toolkit_tests"; then
+    modules+=(Qt5Widgets)
+fi
 failed=0
 for module in "${modules[@]}"; do
     if version=$(pkg-config --modversion "$module" 2>/dev/null); then
@@ -100,6 +110,9 @@ commands=(cc c++ make cmake curl xz python3 dpkg-deb fusermount3 fc-match)
 if "$native_tests"; then
     commands+=(Xephyr xauth xdpyinfo xinput metacity dbus-daemon dbus-send pipewire pipewire-pulse
         pactl pacat parec pw-cli pw-cat pw-link pw-dump)
+fi
+if "$toolkit_tests"; then
+    commands+=(nemo google-chrome firefox)
 fi
 for command in "${commands[@]}"; do
     if ! command -v "$command" >/dev/null 2>&1; then
