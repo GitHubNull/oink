@@ -24,14 +24,15 @@
 
 ## 索引
 
-当前续作入口：[第四轮：A2–F 分波实施与 F 用户实证](2026-11-20-linux-x11-phase2-af-waves.md)。前三轮保持历史快照；本机依赖已由 A2 入口在新树 `.tools/fresh-20261117` 获取。
+当前续作入口：[第五轮：阶段 2 收口状态与后续开发](2026-11-20-linux-x11-phase2-closure-handoff.md)。前四轮保持历史快照；本机依赖已由 A2 入口在新树 `.tools/fresh-20261117` 获取。
 
 | 日期 | 范围 | 文档 | 状态 |
 |---|---|---|---|
 | 2026-11-17 | Linux X11 桌面完整适配 | [2026-11-17-linux-x11-port.md](2026-11-17-linux-x11-port.md) | 进行中：机制探针大部分通过；产品实现未开始 |
 | 2026-11-17 | Linux X11 阶段 2 机制门槛（第二轮） | [2026-11-17-linux-x11-phase2-continuation.md](2026-11-17-linux-x11-phase2-continuation.md) | 历史快照：GTK DnD/输入矩阵/音频 route+restart 通过 |
 | 2026-11-17 | Linux X11 阶段 2 Qt 夹具验收后续作（第三轮） | [2026-11-17-linux-x11-phase2-qt-continuation.md](2026-11-17-linux-x11-phase2-qt-continuation.md) | 历史快照：Qt/GTK 文本矩阵已验收（代码 2d2061a） |
-| 2026-11-20 | Linux X11 阶段 2 A2–F 分波与 F 用户实证（第四轮） | [2026-11-20-linux-x11-phase2-af-waves.md](2026-11-20-linux-x11-phase2-af-waves.md) | 进行中：A2/B/C/D/E 与 FUSE、真机麦克风完成；物理按键/锁屏/触点/精细滚动仍缺用户证据，阶段 2 未通过，产品未开始 |
+| 2026-11-20 | Linux X11 阶段 2 A2–F 分波与 F 用户实证（第四轮） | [2026-11-20-linux-x11-phase2-af-waves.md](2026-11-20-linux-x11-phase2-af-waves.md) | 历史快照：A2/B/C/D/E 与 FUSE、真机麦克风、物理按键、锁屏完成；触摸类 BLOCKED，阶段 2 未通过，产品未开始 |
+| 2026-11-20 | Linux X11 阶段 2 收口状态与后续开发（第五轮） | [2026-11-20-linux-x11-phase2-closure-handoff.md](2026-11-20-linux-x11-phase2-closure-handoff.md) | 历史快照：除触摸类外全部收口；阶段 2 门槛随后按用户书面例外关闭（见 plan.md），阶段 3 实施中 |
 
 ## 长期计划
 

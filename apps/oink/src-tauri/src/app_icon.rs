@@ -7,6 +7,7 @@ use oink_agent::{
 };
 use tauri::{AppHandle, Manager};
 
+#[cfg(any(target_os = "macos", windows))]
 use crate::icon_render::{Appearance, Artwork, render};
 
 #[derive(Default)]
@@ -30,6 +31,7 @@ struct Settings {
 }
 
 impl Settings {
+    #[cfg(any(target_os = "macos", windows))]
     fn appearance(&self) -> Appearance {
         Appearance::resolve(self.mode, &self.accent, self.system_dark)
     }
@@ -86,6 +88,8 @@ pub(crate) fn theme_changed(app: &AppHandle, theme: tauri::Theme) {
 }
 
 pub(crate) fn refresh(app: &AppHandle) {
+    #[cfg(target_os = "linux")]
+    let _ = app;
     #[cfg(target_os = "macos")]
     dock(app, false);
     #[cfg(windows)]

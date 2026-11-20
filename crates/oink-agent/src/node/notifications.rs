@@ -850,6 +850,10 @@ fn copy(language: crate::config::UiLanguage, kind: u8) -> &'static str {
         ][index],
     }
 }
+#[cfg(target_os = "linux")]
+fn system_language() -> String {
+    crate::config::preferences::locale_language()
+}
 #[cfg(target_os = "macos")]
 fn system_language() -> String {
     objc2_foundation::NSLocale::preferredLanguages()

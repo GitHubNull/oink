@@ -7,17 +7,21 @@ use std::time::{Duration, Instant};
 mod color;
 mod interaction;
 pub use interaction::Feedback;
+#[cfg(not(any(target_os = "macos", windows)))]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 mod raster;
 #[cfg(windows)]
 mod windows;
+#[cfg(not(any(target_os = "macos", windows)))]
+use linux as platform;
 #[cfg(target_os = "macos")]
 use macos as platform;
 #[cfg(windows)]
 use windows as platform;
 
-#[cfg(target_os = "macos")]
+#[cfg(not(windows))]
 pub fn scale_for(_display: &DisplayInfo) -> f64 {
     1.0
 }

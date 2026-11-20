@@ -14,7 +14,7 @@ pub enum ShellError {
     LogLevelUnavailable,
     #[cfg(target_os = "macos")]
     StatusIconOwnedByBackend,
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     StatusIconUnavailable,
 }
 
@@ -40,7 +40,7 @@ pub async fn read_attribution(app: AppHandle, path: String) -> Result<String, Sh
             .ok_or(ShellError::AttributionUnavailable)?
             .join("Resources")
     };
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     let root = app
         .path()
         .resource_dir()
@@ -87,6 +87,18 @@ fn open_external(target: &std::ffi::OsStr) -> Result<(), ()> {
             )
         };
         if result.0 as usize <= 32 {
+            return Err(());
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // xdg-open receives a validated http(s) URL or an absolute cache path,
+        // so it can never be mistaken for an option.
+        let status = std::process::Command::new("xdg-open")
+            .arg(target)
+            .status()
+            .map_err(|_| ())?;
+        if !status.success() {
             return Err(());
         }
     }
@@ -143,6 +155,11 @@ pub fn shell_set_status_icon(app: AppHandle, visible: bool) -> Result<(), ShellE
     {
         let _ = (app, visible);
         Err(ShellError::StatusIconOwnedByBackend)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (app, visible);
+        Err(ShellError::StatusIconUnavailable)
     }
 }
 
@@ -263,6 +280,6 @@ pub fn shell_alignment_haptic(app: AppHandle) {
             tracing::debug!(%error, "alignment haptic unavailable");
         }
     }
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     let _ = app;
 }

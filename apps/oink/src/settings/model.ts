@@ -6,6 +6,7 @@ import type { InputTransform, KeyboardMapping } from '../api/types';
 import { setLanguage } from '../i18n';
 import { shortcutId } from './Shortcuts';
 import { DEFAULT_PREFS, presetMap, type Prefs, type PrefsApi, type KeyMap } from './prefs';
+import type { Platform } from '../window/DesktopWindow';
 
 export type LocalPreferences = import('../api/cards').UiPreferences;
 /** Device-local UI preferences kept by this webview only (not backend or group data). */
@@ -26,7 +27,7 @@ function readPresentation(): PresentationPreferences {
   try { const stored = JSON.parse(localStorage.getItem('oink:prefs') ?? '{}'); return { motion: ['auto','reduced','full'].includes(stored.motion) ? stored.motion : 'auto', hide_sponsor: stored.hide_sponsor === true, compact_layout: stored.compact_layout !== false }; }
   catch { return {motion:'auto',hide_sponsor:false,compact_layout:true}; }
 }
-export function editTransform(current: InputTransform, platform: 'mac'|'win', prefs: Prefs, reverseWheel?: boolean): InputTransform {
+export function editTransform(current: InputTransform, platform: Platform, prefs: Prefs, reverseWheel?: boolean): InputTransform {
   const target = platform === 'mac' ? 'windows' : 'macos';
   const previous=current[target].keyboard, map=prefs.keyCustom[platform];
   const entries=Object.entries(map.keys);
@@ -58,7 +59,7 @@ export function editTransform(current: InputTransform, platform: 'mac'|'win', pr
   return result;
 }
 /** Decode the source-owned table without inventing a disabled Fn identity mapping. */
-export function readKeyboardMapping(keyboard: KeyboardMapping, platform: 'mac'|'win') {
+export function readKeyboardMapping(keyboard: KeyboardMapping, platform: Platform) {
   const destinationNames=platform==='mac'?['ctrl','win','alt','shift','caps','none','rightCtrl','rightShift','rightAlt','rightWin']:['control','option','command','shift','caps','none'];
   const saved=keyboard.saved_custom,activeCustom=keyboard.preset==='custom';
   // Old writers preserve unknown metadata but can still edit the active table.
@@ -83,7 +84,7 @@ export function usePreferences(): PrefsApi {
   const busy = useRef(false), queued = useRef<Prefs|null>(null), committed = useRef(prefs), latest = useRef(prefs);
   latest.current = prefs;
   const local = state.localPreferences;
-  const platform = state.boot?.platform === 'windows' ? 'win' : 'mac';
+  const platform = state.boot?.platform === 'windows' ? 'win' : state.boot?.platform === 'linux' ? 'linux' : 'mac';
   useEffect(()=>{
     void api.group().then(group=>setTransform(group.members.find(m=>m.is_self)?.input_transform??null)).catch(()=>{});
     const refresh = () => {void Promise.allSettled([agent.query('launch',api.launchAtLoginStatus),agent.query('fileProvider',api.fileProviderStatus)]);};

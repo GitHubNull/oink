@@ -31,7 +31,7 @@ import { CompactIcon } from './arrange/CompactIcon';
 import { nextSelection, type SelectMode } from './arrange/selection';
 import { ScreenPreview } from './arrange/screenPreview';
 import { CreateProfileDialog, ProfileList, ProfileTools } from './arrange/LayoutProfiles';
-import { DesktopWindow } from './window/DesktopWindow';
+import { DesktopWindow, chromePlatform } from './window/DesktopWindow';
 import { ResizeEdges } from './window/ResizeEdges';
 import { FileProviderDialog, useFileProviderExplainer } from './permissions/FileProviderDialog';
 import { QuitDialog } from './window/QuitDialog';
@@ -78,7 +78,7 @@ export function App() {
     const prefs = usePreferences();
     const view = new URLSearchParams(location.search).get('view') ?? 'main';
     const pairing = usePairing(view === 'main');
-    const platform = state.boot?.platform === 'windows' ? 'win' : 'mac';
+    const platform = state.boot?.platform === 'windows' ? 'win' : state.boot?.platform === 'linux' ? 'linux' : 'mac';
     const [controlTargets,setControlTargets]=useState<ReadonlyMap<string,ControlAction[]>>(()=>new Map());
     const [controls]=useState(()=>new ControlActions({
         read:(device,action)=>controlObservation(agent.get().cards,device,action),
@@ -734,7 +734,7 @@ export function App() {
     // oink-ui ships built-in component strings (default aria labels, key names)
     // in zh-CN and en-US only; Japanese and Korean use its English strings.
     return <OinkProvider locale={language === 'zh-Hans' ? 'zh-CN' : 'en-US'} defaultAccent={DEFAULT_ACCENT.value}>
-    <AppearanceSync local={prefs.local} presentation={prefs.presentation}/><div className="oink-app" data-package-drag={view==='main'&&packageDrag?'':undefined} data-view={view} data-platform={platform} data-edge-to-edge={maximized ? '' : undefined}>
+    <AppearanceSync local={prefs.local} presentation={prefs.presentation}/><div className="oink-app" data-package-drag={view==='main'&&packageDrag?'':undefined} data-view={view} data-platform={chromePlatform(platform)} data-edge-to-edge={maximized ? '' : undefined}>
       {view === 'main' && <div className="win-shadow" aria-hidden="true"><div className="win-shadow__shape"/></div>}
       {body}{view === 'main' && !maximized && <ResizeEdges platform={platform}/>}{(view==='main'||view==='panel')&&!packageDrag&&<StatusNotices/>}
       {winEl && <>{!onboarding && <PairDialog pairing={pairing} container={winEl}/>}<BlockListDialog loading={state.blocked === null} pending={unblocking} error={blockError} open={blockedOpen} blocked={pairing.blocked} container={winEl} onClose={() => setBlockedOpen(false)} onRemove={p => { setBlockError(null); setUnblocking(ids => [...ids,p.id]); void pairing.actions.unblock(p).catch(() => setBlockError(problemText('unavailable'))).finally(() => setUnblocking(ids => ids.filter(id => id !== p.id))); }}/>

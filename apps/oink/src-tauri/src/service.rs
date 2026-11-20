@@ -1,9 +1,10 @@
-//! The UI starts the Windows backend once, then follows one IPC subscription.
-//! Ending that subscription ends the UI; this module never restarts a crashed backend.
+//! The UI starts the Windows or Linux backend once, then follows one IPC
+//! subscription. Ending that subscription ends the UI; this module never
+//! restarts a crashed backend.
 use oink_agent::ipc::ServiceInfo;
 use oink_agent::remote::{EventsEnd, RemoteApi};
 use std::path::Path;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::process::Command;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -24,7 +25,7 @@ impl Startup {
     pub(crate) fn ready(&self) -> bool {
         matches!(*self.0.borrow(), Some(Ok(())))
     }
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, target_os = "linux", test))]
     pub(crate) fn finish(&self, result: Result<(), String>) {
         self.0.send_replace(Some(result));
     }
@@ -41,7 +42,7 @@ impl Startup {
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 程序入口：按命令行参数选择服务进程、停止服务或界面。返回 `None` 表示运行界面。
@@ -153,14 +154,69 @@ pub fn start_once(api: &RemoteApi, exe: &Path) -> Result<(), String> {
     }
 }
 
+/// Startup only; Linux spawns the sibling backend once and waits for its
+/// instance lock and IPC endpoint. No watchdog restarts it later.
+#[cfg(target_os = "linux")]
+pub fn start_once(api: &RemoteApi, exe: &Path) -> Result<(), String> {
+    let backend = exe
+        .parent()
+        .ok_or_else(|| "backend entry directory unavailable".to_owned())?
+        .join(oink_agent::backend::MAC_BACKEND_EXECUTABLE);
+    let mut seen_owner = false;
+    let mut launched = match oink_agent::instance::is_running(api.data_dir()) {
+        Some(true) => {
+            seen_owner = true;
+            None
+        }
+        Some(false) => {
+            let mut command = Command::new(&backend);
+            command
+                .env("OINK_HOME", api.data_dir())
+                .env_remove(oink_autostart::LOGIN_LAUNCH_ENV);
+            Some(
+                oink_agent::backend::launch::spawn_detached(&mut command)
+                    .map_err(|e| format!("backend launch failed: {e}"))?,
+            )
+        }
+        None => return Err("backend_ownership_unavailable".into()),
+    };
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        if let Some(process) = launched.as_mut()
+            && let Ok(Some(status)) = process.try_wait()
+        {
+            return Err(format!("backend_exited:{}", status.code().unwrap_or(-1)));
+        }
+        let owned = match oink_agent::instance::is_running(api.data_dir()) {
+            Some(true) => {
+                seen_owner = true;
+                true
+            }
+            Some(false) if seen_owner && launched.is_none() => return Err("backend_unavailable".into()),
+            Some(false) if Instant::now() >= deadline => return Err("backend_start_timeout".into()),
+            Some(false) => false,
+            None => return Err("backend_ownership_unavailable".into()),
+        };
+        if !owned {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        api.reset_connections();
+        match api.hello_with_timeout(Duration::from_millis(100)) {
+            Ok(info) if launched.as_ref().is_none_or(|process| process.id() == info.pid) => return Ok(()),
+            Ok(_) => {}
+            Err(error) if api.build_mismatch() => return Err(error.to_string()),
+            Err(_) => {}
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[cfg(windows)]
 fn validate_running_backend(_api: &RemoteApi) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use oink_agent::api::AgentApi;
-        if _api.status().map_err(|e| e.to_string())?.backend_uiaccess != Some(true) {
-            return Err("现有后台没有 UIAccess；请退出后通过 OinkInput 系统服务重新打开".into());
-        }
+    use oink_agent::api::AgentApi;
+    if _api.status().map_err(|e| e.to_string())?.backend_uiaccess != Some(true) {
+        return Err("现有后台没有 UIAccess；请退出后通过 OinkInput 系统服务重新打开".into());
     }
     Ok(())
 }

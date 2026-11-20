@@ -383,3 +383,9 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - 用户最终实证（`hardware-input-user.log`，started_epoch 1795184648.75 = 22:24:08）：`input_start mapped/focus_self=true`；progress keys 0→8→19→32→34、buttons 5→17、motion 183 且 focus_self 恒 true；`input_stop reason=focus_lost key_press=34 key_release=35 button_press=17 button_release=17 motion=183 focus_out=1`。
 - 回归：离线全量 289 项 OK（41.1s）；四套件如上；`git diff --check` 通过；`apps/`、`crates/` 零改动；未 commit/push/tag。
 - 判定：F2 按键 ✅、锁屏/切换 ✅；触摸/触点/精细滚动 BLOCKED（无硬件）；Chromium 源合成拖拽平台限制 BLOCKED（绊线保留）。**阶段 2 仍未通过，不进入产品阶段 3–8**。
+
+### 阶段 2 书面例外收口（2026-11-20，用户决策）
+
+- 用户决策（第五轮交接 §6 路径 B）：**书面例外**。F4 触摸板/触摸/精细滚动因本机无触摸硬件（`xinput` 仅 USB 键鼠与 PiKVM，无触摸板/触摸屏）登记 BLOCKED，不作为阶段 2 阻塞项；F5 Chromium 源合成拖拽起始（平台限制）与 F6 Firefox 文件源（未实现）保持登记，红证据与绊线保留。
+- 其余门槛均有证据：A/A2/B/C/D/E 机制、GTK/Qt/浏览器输入矩阵、FUSE 私有挂载、真机麦克风、物理按键（`hardware-input-user.log`：key 34/35、button 17/17、motion 183）、锁屏/切换。
+- 阶段 2 门槛据此**以书面例外关闭**；进入产品阶段 3（Linux 桌面壳接入），实施计划与波次见本轮实施记录（阶段 3 结束时补记）。本次例外不放宽 F5/F6 的登记，也不改变后续阶段用真实证据收口的义务。

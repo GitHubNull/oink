@@ -1,8 +1,8 @@
 //! The UI is an IPC client; the backend owns all sharing and native overlays.
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod app_icon;
 pub mod boot;
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 mod creation_queue;
 #[cfg(any(windows, test))]
 mod cursor_dispatch_windows;
@@ -20,19 +20,19 @@ mod local_drop_windows;
 mod menu_icons_windows;
 pub mod service;
 pub mod shell_policy;
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 mod sponsor;
 #[cfg(any(windows, test))]
 mod tray_windows;
 #[cfg(any(target_os = "macos", test))]
 mod uninstall;
 mod update_window;
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 mod window_activity;
 #[cfg(any(windows, test))]
 mod windows_hotkey;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod commands;
 #[cfg(target_os = "macos")]
 mod dock_controls;
@@ -42,26 +42,26 @@ mod jump_controls;
 mod main_window_macos;
 #[cfg(windows)]
 mod main_window_windows;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod native_controls;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod native_menu;
 #[cfg(target_os = "macos")]
 mod panel_macos;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod shell;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod system_locale;
 #[cfg(target_os = "macos")]
 mod window_paint;
 #[cfg(target_os = "macos")]
 mod window_paint_macos;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod app;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod live_views;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub use app::run;
 
 #[cfg(test)]

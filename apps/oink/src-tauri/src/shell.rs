@@ -68,7 +68,7 @@ fn enqueue(app: &AppHandle, request: WindowRequest) {
             };
             #[cfg(windows)]
             let result = execute_request(&handle, request);
-            #[cfg(target_os = "macos")]
+            #[cfg(not(windows))]
             let result = {
                 let request_handle = handle.clone();
                 on_ui(&handle, move || execute_request(&request_handle, request))
@@ -118,7 +118,7 @@ fn execute_request(app: &AppHandle, request: WindowRequest) -> tauri::Result<()>
 /// UI callbacks must only enqueue. WebView2's native creation pump can reenter
 /// IPC/tray/window callbacks while Wry owns its WebContext mutex. One worker
 /// drains all normal and panel requests, with no gate held across construction.
-/// AppKit constructors are dispatched to its main thread by that worker; the
+/// AppKit/GTK constructors are dispatched to the main thread by that worker; the
 /// reentrant UI thread never waits for the worker or starts another constructor.
 pub fn open_normal(app: &AppHandle, view: View) {
     debug_assert!(view.normal());
@@ -172,7 +172,7 @@ pub fn shell_resize_panel(app: AppHandle, window: tauri::WebviewWindow, width: f
         };
         #[cfg(target_os = "macos")]
         crate::panel_macos::resize(&window, rect);
-        #[cfg(windows)]
+        #[cfg(not(target_os = "macos"))]
         if let Some(panel) = app.get_webview_window("panel") {
             let _ = panel.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
             let _ = panel.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
@@ -187,7 +187,11 @@ pub fn shell_show_panel(app: AppHandle, window: tauri::WebviewWindow) {
     }
     #[cfg(target_os = "macos")]
     crate::app::on_main(&app, move |_| crate::panel_macos::show(&window));
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    crate::app::on_main(&app, move |_| {
+        let _ = window.show();
+    });
+    #[cfg(windows)]
     let _ = app;
 }
 
@@ -216,7 +220,7 @@ fn create_or_close_panel(app: &AppHandle, anchor: PanelAnchor) -> tauri::Result<
         .skip_taskbar(true)
         .visible(false)
         .focused(false);
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     let builder = builder.always_on_top(true);
     // Tauri/Wry clears both native and WebView backings. The macOS panel paints
     // while invisible and is destroyed on close, so no hidden view keeps running.
@@ -241,6 +245,13 @@ fn create_or_close_panel(app: &AppHandle, anchor: PanelAnchor) -> tauri::Result<
                 window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y))?;
                 window.set_size(tauri::PhysicalSize::new(rect.width, rect.height))?;
                 show_windows(&window, OpenTrigger::Tray.activation())
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = handle;
+                window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y))?;
+                window.set_size(tauri::PhysicalSize::new(rect.width, rect.height))?;
+                window.show()
             }
         })
     });
@@ -350,7 +361,7 @@ fn create_normal(app: &AppHandle, view: View) -> tauri::Result<()> {
             // native control bounds via shell_titlebar_center: this inset alone
             // produces different visible centres on macOS 14 and 26.
             .traffic_light_position(tauri::LogicalPosition::new(18.0 + gutter, 24.0 + gutter));
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let builder = builder.decorations(view == View::About).shadow(view != View::Main);
         #[cfg(windows)]
         let builder = if view == View::Main {
@@ -371,6 +382,8 @@ fn create_normal(app: &AppHandle, view: View) -> tauri::Result<()> {
                 return Err(error);
             }
         };
+        #[cfg(target_os = "linux")]
+        let _ = &window;
         #[cfg(windows)]
         if view == View::Main {
             crate::local_drop_windows::attach(&window)?;
@@ -388,7 +401,7 @@ fn create_normal(app: &AppHandle, view: View) -> tauri::Result<()> {
         tracing::info!(view = label, "product window prepared");
         #[cfg(windows)]
         return finish_normal_windows(app, window, created, created && view == View::Main);
-        #[cfg(target_os = "macos")]
+        #[cfg(not(windows))]
         {
             let reveal = {
                 let shell = app.state::<Shell>();
@@ -514,6 +527,11 @@ fn show_windows(window: &tauri::WebviewWindow, activation: Activation) -> tauri:
         focus_window(window)?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn focus_window(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    window.set_focus()
 }
 
 #[cfg(windows)]

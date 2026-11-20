@@ -47,6 +47,24 @@ pub fn preferred_languages() -> Vec<String> {
     })
 }
 
+#[cfg(target_os = "linux")]
+pub fn preferred_languages() -> Vec<String> {
+    // POSIX priority: LANGUAGE (user-ordered list), LC_ALL, LC_MESSAGES, LANG.
+    // Strip encoding/modifier so `zh_CN.UTF-8` resolves like a BCP-47 tag.
+    let mut languages: Vec<String> = std::iter::once(std::env::var("LANGUAGE").unwrap_or_default())
+        .chain(["LC_ALL", "LC_MESSAGES", "LANG"].map(|name| std::env::var(name).unwrap_or_default()))
+        .flat_map(|value| value.split(':').map(str::to_owned).collect::<Vec<_>>())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.split(['.', '@']).next().unwrap_or_default().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if languages.is_empty() {
+        // POSIX default when no locale is exported.
+        languages.push("C".to_owned());
+    }
+    languages
+}
+
 #[cfg(any(target_os = "macos", test))]
 pub fn auto_language() -> UiLanguage {
     UiLanguage::Auto.resolve(preferred_languages().first().map(String::as_str).unwrap_or(""))

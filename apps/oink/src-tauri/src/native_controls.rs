@@ -123,6 +123,8 @@ fn refresh(app: &AppHandle) {
         if SNAPSHOT.lock().unwrap().rendered.as_ref() != Some(&model) {
             return;
         }
+        #[cfg(target_os = "linux")]
+        let _ = app;
         #[cfg(target_os = "macos")]
         crate::dock_controls::update(app, &model);
         #[cfg(windows)]

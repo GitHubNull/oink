@@ -103,6 +103,18 @@ impl UiLanguage {
     }
 }
 
+/// Linux exposes no per-user language API here; the POSIX locale environment is
+/// authoritative. Strip the encoding/modifier so `zh_CN.UTF-8` resolves as `CN`.
+#[cfg(target_os = "linux")]
+pub(crate) fn locale_language() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+        .and_then(|value| value.split(['.', '@']).next().map(str::to_owned))
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {

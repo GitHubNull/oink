@@ -15,6 +15,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import { Icon, ICONS, Kbd, VisuallyHidden } from 'oink-ui';
 import { CORNERS, fitArrangement, bounds, clampMove, facingGap, cornerPoint, cornerClearance, pickRect, resizeAroundCenter, resizeFromCorner, sameRect, snap, } from './geometry';
 import type { Camera, Corner, Rect, Screen, SnapEdges } from './geometry';
+import type { Platform } from '../window/DesktopWindow';
 import { useSpringRects } from './springs';
 import { useVisible } from '../window/useVisible';
 import { cornerArcPath, useCornerShape } from './cornerShape';
@@ -44,7 +45,7 @@ export type ScreenMove =
     | { type: 'end'; id: string; cancelled: false; label: string; compact: boolean };
 export interface ArrangementProps {
     screens: Screen[];
-    platform?: 'mac' | 'win';
+    platform?: Platform;
     /** Complete retained geometry, including hidden members used at release. */
     geometryScreens?: Screen[];
     onProjection?: (screens: Screen[] | null, held?: boolean) => void;

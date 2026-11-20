@@ -6,7 +6,9 @@ import { Button, Icon, Tooltip, mergeRefs, presets, speed } from 'oink-ui';
 import { useTrafficLightAlignment } from './useTrafficLightAlignment';
 import { OverlayScrollbar } from './OverlayScrollbar';
 import { quietActivationFocus } from './activationFocus';
-export type Platform = 'mac' | 'win';
+export type Platform = 'mac' | 'win' | 'linux';
+/** Linux desktops reuse the custom Windows-style chrome and key naming. */
+export const chromePlatform = (platform: Platform): 'mac' | 'win' => platform === 'mac' ? 'mac' : 'win';
 export interface WindowState {
     maximized: boolean;
     minimized: boolean;
@@ -124,7 +126,7 @@ export const DesktopWindow = forwardRef<HTMLDivElement, DesktopWindowProps>(func
         lastExtra.current = sideExtra;
     const node = useRef<HTMLDivElement>(null);
     const style = { inset: 'var(--main-gutter, 0px)' } as CSSProperties;
-    return (<div ref={mergeRefs(ref,node)} className="win" data-covered={covered ? '' : undefined} data-platform={platform} data-active={active?'':undefined} data-maximized={state.maximized?'':undefined} style={style} role="dialog" aria-label={title} onPointerDownCapture={onActivate} onFocusCapture={onActivate}>
+    return (<div ref={mergeRefs(ref,node)} className="win" data-covered={covered ? '' : undefined} data-platform={chromePlatform(platform)} data-active={active?'':undefined} data-maximized={state.maximized?'':undefined} style={style} role="dialog" aria-label={title} onPointerDownCapture={onActivate} onFocusCapture={onActivate}>
       {platform === 'mac'
             ? <MacTitlebar state={state} onMinimize={onMinimize} onToggleMaximize={onToggleMaximize} onClose={onClose} extra={navToggle} center={center} end={titleEnd} coverBar={coverBar}/>
             : <WinTitlebar state={state} onMinimize={onMinimize} onToggleMaximize={onToggleMaximize} onClose={onClose} extra={navBack ? backBar(navBack) : <>{navToggle}<Lockup /></>} center={center} end={titleEnd} coverBar={coverBar}/>}
@@ -250,7 +252,7 @@ export function AppIcon({ platform, size }: {
     platform: Platform;
     size: number;
 }) {
-    if (platform === 'win') {
+    if (platform !== 'mac') {
         return (<svg className="app-icon app-icon--win" viewBox="8 8 240 240" width={size} height={size} aria-hidden>
         <rect x="8" y="8" width="240" height="240" rx="44" fill="#1B1E28"/>
         <g transform="translate(22.4 22.4) scale(3.3)">

@@ -3,6 +3,7 @@ import { Icon } from 'oink-ui';
 import { inTauri } from '../api/transport';
 import { tr } from '../i18n';
 import type { Platform } from './DesktopWindow';
+import { chromePlatform } from './DesktopWindow';
 let active=false;
 const listeners=new Set<()=>void>();
 const subscribe=(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};};
@@ -42,7 +43,7 @@ export function usePackageDropReceiver(platform:Platform,receive:(path:string)=>
   },[platform]);
 }
 export function PackageDropArea({platform}:{platform:Platform}) {
-  return <div className="package-drop" data-platform={platform}><div className="package-drop__area" role="region" aria-label={tr('放下安装包以更新 Oink')}>
+  return <div className="package-drop" data-platform={chromePlatform(platform)}><div className="package-drop__area" role="region" aria-label={tr('放下安装包以更新 Oink')}>
     <Icon name="download"/><strong>{tr('放下安装包以更新 Oink')}</strong>
     <span>{tr(platform==='mac'?'支持 Oink 的 .dmg 安装包':'支持 Oink 的 .msi 安装包')}</span>
   </div></div>;

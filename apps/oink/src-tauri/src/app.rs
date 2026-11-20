@@ -281,7 +281,9 @@ pub fn run() {
                 return;
             }
         }
-        #[cfg(not(windows))]
+        // macOS backend is already resident (login item); Linux spawns its
+        // sibling backend below, so it must not require ownership beforehand.
+        #[cfg(target_os = "macos")]
         {
             if let Err(error) = crate::service::check_backend_ownership(&data_dir) {
                 tracing::error!(%error, "backend process ownership unavailable");
@@ -310,7 +312,7 @@ pub fn run() {
             api,
             boot,
             update_window: Arc::new(crate::update_window::Owner::default()),
-            startup: crate::service::Startup::new(cfg!(windows)),
+            startup: crate::service::Startup::new(cfg!(any(windows, target_os = "linux"))),
             remote: remote_api,
             capture: Mutex::new(Some(oink_agent::telemetry::UiCapture::new(
                 oink_foundation::paths::data_dir(),
@@ -410,7 +412,7 @@ pub fn run() {
             if let Some(remote) = handle.state::<Backend>().remote.clone() {
                 let connected = handle.clone();
                 std::thread::spawn(move || {
-                    #[cfg(windows)]
+                    #[cfg(any(windows, target_os = "linux"))]
                     {
                         let result = std::env::current_exe().map_err(|e| e.to_string())
                             .and_then(|exe| crate::service::start_once(&remote, &exe));
