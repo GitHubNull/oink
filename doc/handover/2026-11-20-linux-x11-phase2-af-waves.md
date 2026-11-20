@@ -8,9 +8,9 @@
 
 ## 1. 基线、git 状态与环境
 
-- 分支 `main`；HEAD `19bc2948ca6556d88655a37ae45ee61c928d8ca6`（`docs(linux): hand over phase 2 after Qt fixture validation`）。
-- 工作树包含本轮**未提交**的 A2–F 实现：`build-support/` 新增/修改与 `doc/linux-x11/plan.md`；`git status --short -- apps crates` 为空，产品代码零改动。未 commit/push/tag/release（须新的明确授权）。
-- `git diff --check` 通过；`origin`/`upstream` 不变。
+- 分支 `main`；本轮代码提交 `8dbc9ab432ce3ca7d626ecf46764cd1b96245041`（`test(linux): add phase 2 application, transfer and recovery probe waves`，42 个 `build-support/` 文件），文档提交 `65279d1e7706a583254a4947c4c319a0903b0a22`（`docs(linux): record phase 2 wave evidence and hand over hardware gates`）。
+- 两个提交均已推送 `origin/main`，推送后 `git ls-remote origin refs/heads/main` 与 `65279d1` 一致；`git diff --name-only 19bc294..65279d1 -- apps crates` 为空，`git diff --check` 通过。未推送 `upstream`，未创建 tag/Release，未改动产品、锁文件或 CI。
+- 本次交接状态更新随后独立提交并推送；其自身 SHA 用 `git log -1 --format='%H %s' -- doc/handover/2026-11-20-linux-x11-phase2-af-waves.md` 查询，不在文件内循环记录。该次 push 只覆盖本轮交付，不构成后续持续授权。
 - 沿用上轮核实：本机 Rust `1.99.0`，仓库 Node `v24.14.1`；会话系统 Node `v24.22.1` 不可冒充仓库工具链。
 - 本轮 Qt kit/XRes 使用 A2 新树：`.tools/fresh-20261117/Qt/6.12.0/gcc_64`、`.tools/fresh-20261117/sysroot`。
 - 资源限额：构建/原生运行 4 GiB、CPU 200%；runner `TasksMax` 经会期内批准为 1024（其余限额不变），原生串行。
@@ -36,7 +36,7 @@
 ## 3. 本轮新增/修改代码（全部在 `build-support/`）
 
 - A2：`linux_deps_fetch.py`、`linux_deps_archive.py`、`linux_deps_sources.json`、`test_linux_deps_*.py`。仅 HTTPS 有界下载；deb 只读 data 不执行安装脚本；组件自有 stage、原子发布、并发锁、已有目录不覆盖。
-- B：`linux_app_harness.py`、`linux_app_x11.py`、`linux_dnd_app_scenarios.py`、`linux_dnd_app_page.html`。私有 HOME/DBus/临时 profile，本地页面；XRes PID + server epoch + 实际 owner 身份链。
+- B：`linux_app_harness.py`、`linux_app_x11.py`、`linux_dnd_app_scenarios.py`、`linux_app_page.py`（页面夹具与 app 拖拽助手，自 app scenarios 拆出的纯移动）、`linux_dnd_app_page.html`。私有 HOME/DBus/临时 profile，本地页面；XRes PID + server epoch + 实际 owner 身份链。
 - C：`linux_dnd_file.c/.h`、`linux_dnd_incr.c/.h`、`linux_dnd_stream.c/.h`、`linux_dnd_file_scenarios.py`、`linux_dnd_app_file_scenarios.py`。INCR 握手/终止、offset/遍历/符号链接边界、URI staging。
 - D：`linux_dnd_recovery.py`、`test_linux_dnd_recovery.py`。故障许可注册表、进程身份（ppid+starttime）、EOF 回收屏障、旧代恒拒。
 - E：`linux_input_toolkit_route.c`（专属 master + 行命令路由）、`linux_input_toolkit_scenarios.py`、`linux_input_toolkit_qt_row.py`、`linux_input_toolkit_qt.cpp`、`linux_input_toolkit_qt_build.py`、`linux_input_app_page.html`、`test_linux_input_toolkit.py`。
@@ -189,7 +189,7 @@ python3 /home/wgh/dev/cross_platform_app/oink/build-support/linux-native-test.py
 
 ## 10. 接手第一步（新代理/新会话）
 
-1. 只读确认现状：`git status --short --branch`、`git log -1`、`git diff --check`。工作树中的 A2–F 改动（`build-support/` 与 `doc/linux-x11/plan.md`）是唯一最新状态，不得丢弃、覆盖或重写历史提交。
+1. 只读确认现状：`git status --short --branch`、`git log -3`、`git diff --check`。A2–F 实现已随 `8dbc9ab`/`65279d1` 推送 `origin/main`，工作树应干净；不得丢弃、覆盖或重写这些历史提交，也不要在其上重放旧工作树快照。
 2. 读本文件与 `doc/linux-x11/plan.md` 末尾的 F 波收口记录；旧交接只作历史快照，不要照旧安装全局 Qt5 或复用 11-17 旧二进制。
 3. 依赖检查（不自动安装系统包）：`bash build-support/linux-deps.sh --check --native-tests --toolkit-tests`，需要时加 `OINK_QT_KIT="$PWD/.tools/fresh-20261117/Qt/6.12.0/gcc_64"`、`OINK_XRES_SYSROOT="$PWD/.tools/fresh-20261117/sysroot"`；缺失即停并告知用户。
 4. 只读核验既有用户证据：`.release-tools/linux-probes/` 下的 `fuse-user.log`、`hardware-input-user.log`、`hardware-mic-user.log`、`f-mic-consumer.log`；不得覆盖、删除或要求用户重做已有证据。
@@ -202,5 +202,6 @@ python3 /home/wgh/dev/cross_platform_app/oink/build-support/linux-native-test.py
 | 日期 | 代理 | 范围 | 结果/产物 |
 |---|---|---|---|
 | 2026-11-17 | Qoder | 三轮交接与 Qt 夹具验收 | 见 2026-11-17 各文件；代码 `2d2061a` 已推送 |
-| 2026-11-20 | Qoder | A2/B/C/D/E 分波 + F 入口与用户实证 | 离线 285 项 OK；A2 新树验收、B 文本矩阵、C INCR/文件矩阵、D 两代恢复、E 8 行输入矩阵、FUSE/麦克风用户实证、物理输入部分证据；未提交，产品未动 |
+| 2026-11-20 | Qoder | A2/B/C/D/E 分波 + F 入口与用户实证 | 离线 285 项 OK；A2 新树验收、B 文本矩阵、C INCR/文件矩阵、D 两代恢复、E 8 行输入矩阵、FUSE/麦克风用户实证、物理输入部分证据；产品未动 |
+| 2026-11-20 | Qoder | 提交与推送本轮交付 | 代码 `8dbc9ab`、文档 `65279d1` 已推送 `origin/main` 并核验远端 SHA；本文状态更新随后独立提交推送 |
 | 待接手 | 后续代理 | 物理硬件用户证据补齐与阶段 2 总门槛 | 按 §6 复跑、§9 收口；完成后进入产品阶段 3–8 |
