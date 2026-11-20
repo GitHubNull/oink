@@ -256,3 +256,116 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - 新增 [第三轮自包含交接](../handover/2026-11-17-linux-x11-phase2-qt-continuation.md)，同步交接索引；完整保留 A2/B/C/D/E/F 范围、逐项验收、真实代码缺口、失败/成功证据、限额重建与串行复跑命令。明确旧 Qt5 安装建议已过时、旧报告二进制不可复用、input-matrix 需链接 Xau、依赖和日志仅本机忽略目录存在。
 - 再次核实 `apps/`、`crates/` 自 `d8b2932` 至代码提交无改动；Linux UI 仍拒绝启动，输入/显示/剪贴板仍 Unsupported，音频仍占位。当前不是“产品差一步”，阶段2仍不通过，阶段3–8尚未开始。
 - 本次文档独立提交交付，不改版本、不打 tag、不发布、不改 CI 或系统权限；用户此次提交/推送授权不延伸为后续代理的持续授权。交接前停止实施 B–F，留给下一代理按批准顺序推进。
+
+## 第四轮续作记录（2026-11-17，基线 19bc294）
+
+- 接手核实 `main` / `19bc294`、工作树干净，Rust 1.99.0、仓库 Node 24.14.1；`bash -n build-support/linux-deps.sh`、`bash build-support/linux-deps.sh --check --native-tests --toolkit-tests`、`git diff --check` 均 exit0，Qt 6.12.0 / XRes 1.2.1 本地依赖通过。约定 `fuse-user.log` 不存在，仅表示无可读取证据，不推断用户未操作；不代理挂载。
+- 用户批准按新鲜基线→A2→B隔离/文本→C→B完整矩阵→D→E→F续作；仍不提交、推送、发布、不改产品/工具链锁/CI/系统权限。新批次 `.release-tools/linux-probes/continuation-20261117-a/` 保留构建、测试、SHA-256、mtime和每步命令/exit，入口为该目录 `verify_baseline.py`；构建/测试保持4GiB/CPU200%/Tasks256，原生串行。此条记录时任务正在执行，尚无本轮原生通过结论；A2固定来源核实同步进行，B–F尚未实施。
+- 新鲜基线首轮：七产物严格编译、原210项离线测试通过；input在原replay断言失败，`continuation-20261117-a/input.log`保留红证据，后续原生未启动。XRes焦点诊断证明原override-redirect窗口在首批输入后失焦给Metacity（`input-focus-diagnostic.log`）；改为WM管理窗口并有界等待真实映射，不减弱重放/吞键/专属master断言。新增4项离线映射测试先全部失败（`input-window-red.log`），修复后全过（`input-window-green.log`）；正式严格构建后的`input-managed-final.log`原机制全部通过且唯一清理汇总成功。完整基线在新批次`continuation-20261117-b`重跑，不能用单项绿灯替代。
+- A2新增固定来源清单、安全libarchive逐entry提取及获取入口，Qt官方qtbase/ICU与Ubuntu匹配XRes开发/运行包固定SHA-256及大小；下载仅HTTPS有界curl，deb只读data，不运行安装脚本，目标树内XRes链接，组件自有stage原子发布、完整清单复核、并发锁、已有目录不覆盖。最初依赖测试的entries同名冲突是测试辅助函数问题（`deps-archive-tests.log`）；修正参数名后资源上限真实被测。新增生命周期测试揭示非object清单未经验证导致AttributeError（`deps-lifecycle-red.log`），补类型检查后50项依赖测试通过（`deps-lifecycle-green.log`），含并发子进程、篡改、中断与重跑。未放宽任何原用例。
+- A2正式入口在全新`.tools/fresh-20261117`从固定来源下载并完成两组件安装（`continuation-20261117-b/deps-fresh-install.log`，exit0）；没有复用旧拷贝或修改旧kit/sysroot。
+- 完整基线批次`continuation-20261117-c`：七产物严格零告警构建、新鲜度/SHA-256记录、纯矩阵校验与串行 input/dnd/input-matrix/audio/audio-route/audio-restart/dnd-all(双会话)/qt-matrix 全部exit0，每份唯一`native_test_summary`的probe_exit/result/remaining_mounts=0及services/cleanup/mount检查true；完整离线套件240项通过（`continuation-20261117-b/linux-unit-full.log`）。input在修复后批次C一次通过，且修复后二进制另经私有环境连续7轮稳定通过（`focus-stability-1..7.log`）。
+- input根因补充：managed窗口后仍有WM聚焦竞态，`focus-reproduction-2.log`证明Metacity把焦点留在自有frame窗口（XRes PID归属metacity），replay正确执行但目标0事件。正式修复在映射就绪后新增焦点就绪阶段：先轮询等待WM焦点值稳定（有界、事件驱动、失败关闭），再显式`XSetInputFocus`并要求服务器确认焦点落在目标窗口；不放宽任何重放/吞键/专属master断言。3项新离线回归先用旧行为桩取得红灯（`input-focus-red.log`），实现恢复后7项全过（`input-focus-green.log`）。
+- A2新树原生验收：新kit qmake前缀自重定位报告6.12.0且`QT_INSTALL_PREFIX`指向新树；`OINK_QT_KIT`/`OINK_XRES_SYSROOT`覆盖下`linux-deps.sh --check --native-tests --toolkit-tests` exit0（`deps-fresh-check.log`）；`ldd`证实libXRes.so.1与libQt6*均解析到新树内部；XRes诊断探针在私有会话内以新树XRes真实返回client PID。新kit构建Qt角色后Qt/GTK矩阵8场景（qt↔qt、qt→gtk、gtk→qt各Drop/Escape及拒绝旧代/外来owner）全部PASS、工具进程exit0（`fresh-qt-build.log`、`fresh-qt-matrix.log`，唯一汇总true）。正式入口对新树`--check-only`复核exit0（`deps-fresh-recheck.log`）。**A2记为PASS**。
+- 本轮收尾：临时诊断源（input-replay-diagnostic.c、input-focus-trace.c及实现备份patch）已清理，诊断二进制、红/绿日志与两批次status.jsonl保留在忽略目录；`git diff --check` exit0，变更/新增源码均≤500行（input探针342行、archive 222、fetch 250及三个测试文件164–248行），未改产品/锁文件/CI/系统权限，未提交/推送/tag/发布。
+- 阶段2剩余（未开始）：B真实应用隔离/身份/文本矩阵、C文件与INCR及B完整矩阵、D恢复、E真实toolkit输入、F用户硬件/FUSE收口；FUSE约定日志仍不存在，物理硬件与真实麦克风仍无证据。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### B波续作记录（2026-11-17，续 19bc294）
+
+- B波范围：私有 runner 内真实应用（Firefox、nemo 文件管理器）作为 XDND 一端，验证进程隔离、XRes+epoch+generation 应用身份分支与文本载荷，不弱化任何 fixture 私有检查。浏览器沙箱未关闭（Chrome 的 `--no-zygote` 要求 `--no-sandbox`，被禁），Chrome 行暂以 BLOCKED 记，待用户就 TasksMax=256 冲突决策。
+- 资源墙定位与化解（限额内）：Firefox 套件 GLib `creating thread` EAGAIN 连击，实测 scope 线程稳态210–217、启动尖峰253，顶到 TasksMax=256。削减需求而非提高限额：`NO_AT_BRIDGE=1` 禁 at-spi；dbus-daemon 空激活目录阻断 portal 生成；Firefox user.js 关闭预分配进程（真实 pref 名自 omni.ja 提取：`dom.ipc.processPrelaunch.fission.number`/`.lowmem`）。新增 `wait_task_headroom()` 有界线程余量门（`test_linux_app_wave.py` 3 项离线回归）。未动限额、未不限额重试。
+- XRes 三重根因（C 与 python 两侧同病）：(1) 必须先 `XResQueryVersion` 协商，否则客户端库静默拒绝查询；(2) Xlib Status（1=成功）与 X11 `Success==0` 语义相反，原 `status == Success` 恒假；(3) Xephyr 对 `XResQueryClientIds` 返回 Status 0 但结果完整填充，须以"输出已填充"为成功判据、失败关闭。修复后私有会话内 C 与 ctypes 两侧均真实返回 client PID（`app-diag-xres*.log` 证据链）。
+- 应用源身份：`XdndSelection` owner 可能是 override-redirect 代理窗口、不在应用窗口树内，故身份以 XRes 服务器端 client PID ∈ 应用进程树 + 根窗口 session epoch 原子 + 控制器写 generation 原子三重校验（`app_identity` 独立分支，不弱化 `selection_identity`）。wire 协议新增 `ARM_APP=18` 与报告 `app` 字段；`Role.command` 对 ARM_APP 同步代际跟踪。
+- Firefox 目标方向空数据根因：角色源只提供 UTF8_STRING，Firefox 请求 `text/plain` 被拒（python `XConvertSelection` 对拍实证）。`linux_dnd_roles.c` targets 增 `text/plain`，`selection_get` 按请求 target 回填。修复后 48 字节随机载荷经页面 `received_sha256` 与角色 digest 逐字节比对通过。
+- Xephyr XDND 落点不稳定根因：快速 8 步传送路径后 release，Firefox  sometimes 完全不处理 drop（页面 dragenter/dragover 仪器证实无事件，截图证实指针与拖放图标在 #dst 内）。释放前加小幅真实 motion 对（ settle ）后 4/4 稳定通过；机制未知但不绕过任何断言，真实用户路径本含连续 motion。nemo 目标行同样修复。
+- nemo 根因：私有 dbus 无激活目录时 gvfsd 不可激活，nemo 主循环空转永不建窗（strace 实证非阻塞、gvfsd socket 连接失败）。runner `start_dbus` 改为仅放行 `org.gtk.vfs.Daemon`/`org.gtk.vfs.Metadata` 两个激活项（卷监视器仍阻断，portal 仍不可生成），新增离线回归 `test_dbus_activation_exposes_only_gvfs_core`。nemo 窗类实为 `Nemo`（非 `nemo`），修正匹配。
+- B波实测：Firefox 三行（source-text-drop、target-text-drop、source-reject-forged-pid）`app-firefox-30.log` 全 PASS；nemo 两行（startup-identity、target-text-contract）`app-nemo-2.log` 全 PASS（contract 行为 selection_requests=2 且树变化，文本落为文件）。
+- browser_source_text 身份接收循环偶发超时根因（`app-firefox-29/32.log` 红证据保留）：`begin_app_drag` 为让页面收到按下而把全屏应用窗口 raise 到最上，目标角色窗口被压到其下，应用源的 XdndEnter 永不到达（visits 恒 0）；接受循环前显式 `XRaiseWindow` 目标角色并留稳定时间后 `app-firefox-33/34.log` 连续两轮全行 PASS。接受循环另加 settle motion 对与 15s 有界预算（Xephyr XdndPosition 突发丢失同源）。
+- 经用户批准（2026-11-17），runner TasksMax 有界 256→1024（内存 4GiB/CPU200% 不变、仍串行、仍私有 Xephyr；理由：真实 Chromium 线程需求远超 256，且其诊断要求关闭沙箱被安全约束禁止，无法减重）。`require_resource_limits`、systemd-run 参数、headroom 门 TASKS_MAX 及两处离线边界测试同步更新，39 项离线测试通过。
+- Chrome 四行实测（`app-chrome-1/2/3.log`）：target-text-drop PASS（GTK 角色源→Chrome 页面，48 字节载荷 verbatim，Chromium 请求 selection 两次，断言改 1..4 有界）；三行 source 方向（text-drop/reject-forged-pid/reject-late-generation）BLOCKED——Chromium 无视 XTEST 拖拽起始：trusted press+60px motion 到达页面（probe-mousedown/mousemove 仪器证实）但无 dragstart、无 XdndSelection owner（`app-diag-chrome*.log` 已清理、结论入档）。以带绊线的 `browser_source_synthetic_blocked` 记录：若未来 Chromium 放行合成拖拽起始，该行进 FAIL 强制升级为真实源测试。物理鼠标 counterpart 属 F 波用户手测范围。Chromium 作目标接受外部 XDND 正常。
+- **B波结论（任务#5）**：Firefox 三行、nemo 两行、Chrome 一行实测 PASS，Chrome 三行 BLOCKED（平台限制，已登记）；红证据（`app-firefox-29/32.log`）保留。临时诊断脚本/二进制已清理，日志与构建产物保留。未提交/推送/tag/发布。
+- 协议变更后原生回归：`dnd-all-after-appwave.log` 8 场景全 PASS（双会话，唯一汇总 probe_exit/result/remaining_mounts=0、清理/服务/挂载全真）；`qt-matrix-after-appwave.log` 首次 FAIL 属预期——Qt 角色按第三轮警告须按当前源码重建（旧 wire 协议不兼容），`linux_dnd_qt_build.py` 以新 kit 重建 `dnd-qt-current` 后 `qt-matrix-after-appwave-2.log` 8 场景及 7 坏控制帧全 PASS、工具进程 exit0 零 stderr。完整离线套件 discover 全部通过（skipped=5 为 Sentry 凭据相关）。
+- 阶段2剩余：C文件与INCR及B完整矩阵（含 Chrome 决策）、D恢复、E真实toolkit输入、F用户硬件/FUSE收口。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### C波续作记录（2026-11-17，续 19bc294，INCR/流通道层）
+
+- 协议扩展：`linux_dnd_wire.h` PAYLOAD_MAX 128→8MiB，新增 INCR_THRESHOLD(256K)/INCR_CHUNK_MAX(64K)/STREAM_CHUNK_MAX(64K)/STREAM_QUEUE_MAX 与 9 个报告计数字段（incr_handshake/chunks/bytes/done/sent/sent_bytes/abandoned、bridge_chunks/bytes/bad），Command 增 FETCH_STREAM/LOAD_STREAM；`linux_dnd_protocol.py` FIELDS/枚举/PAYLOAD_MAX 同步，新增 STREAM_HEADER(44 字节 LE)/MAGIC/TERMINATE/MIME 常量。
+- 新增 `linux_dnd_incr.c/.h`（发送状态机+被动接收观测，185/12 行）与 `linux_dnd_stream.c/.h`（socketpair 继承 FD 二进制通道，186/16 行）。角色集成：command() 控制数组缩至 LINE_MAXIMUM/2+4（PAYLOAD_MAX 增大后原 `values[PAYLOAD_MAX+4]` 在 GTK 与 Qt 两侧均为 64MB 栈数组，Qt 首个命令即 SIGSEGV，gdb 实证 QSocketNotifier 栈内溢出）；LOAD 内联 ≤128 字节；DELAY 限 ≤INCR_THRESHOLD；selection_get 拒大体积（INCR filter 独占）；tick 挂 incr_poll；main 调 incr_init/stream_init；source 角色 48 字节自动体可被流载荷在 begin 前替换（proxy 不许覆盖已载体）。
+- INCR 发送方根因修复（1MiB 实证恒复现）：末块与零长终止块同发时后者覆盖前者，GTK 读到空属性提前收尾、恒丢末块。改为末块发出后挂 `final_sent`，等接收方 delete 末块再发零长块。GTK 接收经 per-screen IPC widget 窗口取数（非目标 widget 窗口），观测按"pending 期间首个 INCR 类型 NewValue"动态锁窗/atom，同块 NewValue 有重复须 Delete 沿后才计新块（1MiB+123 实证 handshake=1/chunks=21/bytes 精确/done=1）。
+- python 侧：Role 构造建 socketpair 经 OINK_STREAM_FD+pass_fds 传入；`send_wire` 原语；`bridge_payload`（catcher FETCH_STREAM→校验帧头（magic/epoch/generation/offset 连续/块界/TERMINATE 仅末块）→proxy LOAD_STREAM，收代理延迟 R）；`stream_feed`（LOAD_STREAM 推任意载荷入 source/proxy）；LOAD_STREAM 返回 STREAM_DEFERRED 哨兵时 command() 跳过同步报告。
+- 场景 `linux_dnd_incr_scenarios.py`（157 行）四行全 PASS：`incr-source-catcher-1048699`（源→catcher，INCR 收/发双侧证据+digest 比对+escape 清理）、`incr-source-catcher-bridge-327687`（源→catcher INCR→FD 桥→proxy 载入 digest 一致）、`incr-proxy-target-1048699`（proxy→target INCR drop）、`stream-load-rejects-oversize-and-stale`（超限 total 拒 2、旧代拒 1）。控制 ACK 预算行 118–650µs（预算 500ms）。
+- 堆叠坑登记：metacity 下 XRaiseWindow 压不动堆叠（实证 raise 后源窗仍在下）；proxy 与 source 同槽位（100,220），按压类场景改为"proxy 推迟到源 drag 结束后再建"（桥接无需窗口交互）规避，不依赖 WM raise。
+- 回归：GTK `dnd-all`（双会话，13 个 PASS 行/轮）+ INCR 套件连续五轮全绿；Qt 角色按新 wire.h 重建（顺带修 64MB 栈数组）后 qt-matrix 8 场景（qt↔qt、qt→gtk、gtk→qt 各 Drop/Escape + 拒绝旧代/外来 owner）全 PASS。离线 discover 248 项全过（env 断言放行 OINK_STREAM_FD、opcode 数动态化、新文件纳入 500 行门禁）。
+- **C波 INCR/流通道层结论**：≥1MiB 真实 selection 双方向（源→catcher、proxy→target）取得握手/块数/字节/offset/终止完整证据；FD 二进制桥接双向实证；负面用例（超限/旧代）收口。临时诊断脚本/二进制已清理。
+- C波剩余（未开始）：文件 URI staging（授权根实读、peer staging、offset/遍历、空文件/嵌套目录/Unicode/路径逃逸/符号链接）与文件矩阵（nemo/Firefox/Chrome × 文件/目录）、取消/owner死亡/暂存失败等负面层。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### C波续作记录（2026-11-20，续上节，文件 staging 层）
+
+- 协议扩展：`linux_dnd_wire.h` FIELDS 增 file_requests/file_reads/file_entries/file_bytes/file_bad/staged/published 七项，Command 增 FILE_READ/FILE_STAGE/FILE_VERIFY（24 个）；MIME_UTF8/TEXT/URI_LIST/OCTET 常量入 wire.h；`linux_dnd_protocol.py` 同步 FIELDS/枚举，`bridge_payload` 放行 mime≤OCTET 并原值中继，`stream_feed` 增 mime 参数。
+- 新增 `linux_dnd_file.c/.h`（275/16 行）：FILE_READ（source 按授权根 $OINK_NATIVE_TEST_ROOT/files 实读，O_NOFOLLOW+realpath 前缀包含防逃逸，pread 循环 sha256+size 稳定性双读校验，>PAYLOAD_MAX 软拒 2）；FILE_STAGE（proxy 独有：staging/tmp→fsync→盘上重哈希对 digest→一次原子 rename 发布到 published/ 子树，失败清理，发布后 payload_clear 供下一文件）；FILE_VERIFY（catcher/target offset pread 重哈希或确定性排序目录遍历，符号链接列 L 不跟随）。路径字节经控制行数字传输（≤255，禁反斜杠/空/dot 组件/控制字节，角色启动自建 0700 files 根）。
+- 根因修复三处：①staging fd O_WRONLY 上 pread 重哈希必 EBADF（改 O_RDWR）；②file_read 变更校验误拿文件 digest 对过期报告字段（改为对实读 body 重哈希）；③角色启动 digest 字段未初始化（struct 零值≠空摘要，main 补 payload_report，payload_report 去掉空 body 特判恒为真 sha256）。
+- 语义约束实证：proxy 不覆盖已载体（stream_load `body_length && is_proxy→2`），故桥接载入的 blob 直接 stage，后续文件须等 stage 消费后重喂；FILE_STAGE 只发布 published/ 子树（resolve_new 对 published/<rel>）。
+- 场景 `linux_dnd_file_scenarios.py`（约 360 行）全 PASS：`file-text-drag-same-server`（Unicode 文本文件源实读→真实 drag→catcher 实读+FD 流字节比对→回源→target drop，get=2 精确）、`file-stage-dual-server`（300KB+ blob 源实读→INCR→catcher FETCH_STREAM→桥→proxy 载入→stage→peer 发布→target 校验 digest/磁盘字节独立比对+嵌套目录发布→双角色遍历清单字节/digest 交叉一致）、`file-empty-roundtrip`（零字节读写+空摘要；限制登记：零字节负载无法发起真实 drag，不走 XDND 正文通路）；拒绝面 11 例全过（逃逸/dot组件/反斜杠/缺失=角色硬拒退出，目录/超限/角色错配=软拒 status 2 存活，发布目标冲突=硬拒，peer 符号链接出根 verify=硬拒）。
+- 回归：GTK scenarios+INCR+file 三套件连续五轮全绿（15/15  summary result=0）；Qt 角色按新 wire.h 重建后 qt-matrix 8 场景全 PASS；离线 discover 248 项全过。
+- **C波文件 staging 层结论**：授权根实读→XDND 正文唯一通路→peer 独立 staging→发布→真实打开/offset/遍历全链路证据闭环；源零删除、CLIPBOARD 哨兵不变、拒绝面完整。C波剩余：文件应用矩阵（nemo/Firefox/Chrome × 文件/目录，Chromium 源方向预期 BLOCKED 带绊线）与取消/owner死亡在文件层的负面变体。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### C波续作记录（2026-11-20，续上节，文件应用矩阵）
+
+- 新增 `linux_dnd_app_file_scenarios.py`（约 300 行）：GTK 角色源/目标 × 真实应用（nemo/Firefox/Chrome）文件与目录行。页面夹具 `linux_dnd_app_page.html` drop 报告扩展 `file_digests`（File 对象 name+size+正文 sha256）；`linux_app_x11.py` 增 `move_window`（XMoveWindow+XSync，纯新增不改既有行为）。
+- nemo 目标两行 PASS（nemo-target-file-drop / nemo-target-directory-drop）：uri-list 经授权根 FILE_READ 实读入源体→真实 drag→nemo 真请求 selection 2–3 次→nemo 真实复制文件/目录到下落目录，落盘字节与 PAYLOAD 逐字节比对一致。
+- nemo 源行（nemo-source-file-drop）根因三连：①图标坐标盲猜（窗口+60,+130）从未命中——`xwd -root` 私有工件裁剪截图实证首个图标中心在窗口 (236,128)，改坐标后 nemo 真发起拖拽（override-redirect 拖拽图标窗成 XdndSelection owner，XRes PID 认证通过）；②应用源 press 时自 raise 全屏窗，metacity 下 XRaiseWindow 压不回堆叠，catcher 槽位 (615,330) 全被 nemo 窗 (239,107,800x550) 覆盖，XdndEnter 永不到达——`move_window` 把 catcher 移到 (1090,600) 屏幕空区（角色 r.x/r.y 每次 report 经 gdk_window_get_origin 重算，无 stale）后通过；③nemo 对 UTF8_STRING selection 请求回**裸绝对路径**而非 file:// URI（其真实原生源格式），断言改为"body 含真实文件路径"并登记格式限制；FILE_VERIFY 对实文件 offset 重哈希 digest 精确比对通过。
+- 浏览器目标两行 PASS（firefox/chrome-target-file-drop）：GTK 源 file:// uri-list→浏览器把 URI 转为真实 File 对象交付页面（types=['Files'] 或 []，uri 字段空），页面 file_digests 正文 sha256 与 PAYLOAD 独立比对一致（channel=File）；这是 Firefox/Chrome 对本地文件拖放的真实原生通道。
+- 浏览器源文件行登记 BLOCKED 带绊线：chrome-source-file-drop 与 Chrome 文本源同因（Chromium 无视 XTEST 拖拽起始，`browser_source_synthetic_blocked` 绊线同效）；firefox-source-file-drop 为本波未实现真实 Firefox 文件拖拽源（页面夹具仅 text/plain）。
+- 回归：B 波文本矩阵全量重跑 10 行结论不变（6 PASS + 4 Chrome BLOCKED，页面夹具扩展无回归）；离线 discover 248 项全过。本层未改 C 角色共享行为（仅 harness 纯新增方法与页面/场景文件），五轮 GTK+Qt 全量回归结论沿用上一轮。
+- **C波文件应用矩阵结论（任务#6）**：矩阵 7 行收口（nemo 三行 PASS、Firefox/Chrome 目标行 PASS、Chrome 源 BLOCKED 平台限制登记、Firefox 源 BLOCKED 未实现登记）；文本矩阵 10 行维持。C 波全部完成。阶段2剩余：D 恢复、E 真实 toolkit 输入、F 用户硬件/FUSE 收口。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### D波续作记录（2026-11-20，续上节，代际恢复层）
+
+- 协议扩展：`linux_dnd_wire.h` Command 增 GENERATION(24)（监督者给 source/proxy 分配新代，begin 时发布 generation atom）；`linux_dnd_roles.c` 与 `linux_dnd_qt_control.cpp` 镜像门 `op==GENERATION && is_source && !argc && generation > r.gen && !r.begin && !r.down`（GTK+Qt+python 三处同步）；ARM/ARM_APP/DISARM 三处增 `r.drop = 0` 代际重置（保持一代一次 drop 不变式，复用角色可跨代交付）；`linux_dnd_protocol.py` 枚举与代际跟踪元组同步。
+- 新增 `linux_dnd_recovery.py`（约460行，500 行门禁内）：scenario 装饰器注册表、逐场景 FAIL row+traceback、场景间 `x11.release()` 防卡键；helper：`process_token`（ppid+starttime 联合身份）、`Faults` 故障许可注册表（注册记 (pid,starttime)，kill 先校验身份后消费许可，refuse 负控恒拒）、`expect_eof`（EOF+回收+关 FD 后才允许重启）、`stale_refused`（旧代 STATUS 恒 1）、`x11_session`（跨 peer 会话临时改 os.environ DISPLAY/XAUTHORITY）。
+- 五场景全 PASS（RECOVERY_DONE rows=5 failures=0，双会话）：D1 source_restart_two_generations（idle 杀源→EOF→剪贴板负控→source2 GENERATION 2→start→ARM gen2→stale×2→两代真实交付）；D2 peer_reconnect_two_generations（gen1 源→catcher→bridge→proxy→target(peer) 全链→ESCAPE+UP 释放→杀 source+catcher→重建 gen2，target 幸存者重 ARM+stale 拒→gen2 交付；peer 侧旧 proxy 窗用 x11_session+move_window 挪开）；D3 controller_eof_mid_drag（拖中杀 target→EOF→源 ESCAPE 孤儿取消→cleanup(cancel, returned=0)→source.close() retire→双重启 gen2 交付）；D4 fault_nested_xephyr（存活主会话内自有故障用嵌套 Xephyr：xauth :999 占位→-displayfd→拿到号后 add :N+remove :999→认证连接→注册故障杀→主会话存活+剪贴板验证；stray sleep 负控恒拒）；D5 new_generation_start_failure（缺二进制 FileNotFoundError、/bin/true impostor EOF、sentinel+catcher 健康检查组合）。
+- 根因三登记：①ESCAPE 取消的 GTK drag 遗留 32x32 override-redirect 拖拽图标窗在 press 点（不随 source 窗口销毁）——拖中杀角色须退役老 source 进程才回收；②XTEST 按钮状态 server 全局、客户端死亡不释放——SIGKILL 带键死角色卡 button 1 吞后续 press，杀前必 UP+wait raw_up；③gen2 身份恒拒根因——source begin 发布自己的 r.gen=1，catcher 升代后比对失败，故须监督者 GENERATION 命令预分配新代。
+- 离线：`test_linux_dnd_recovery.py`（151 行）8 项（FakeRole socketpair、process_token/Faults 注册杀/拒/PID 复用/expect_eof 生死两组）；两文件入 500 行门禁名单。
+- 回归：GTK scenarios+INCR+file 三套件连续五轮全绿（15/15 rc=0、每轮唯一 native_test_summary result=0）；Qt 角色按当前源码（GENERATION 门+drop 代际重置）重建后 qt-matrix 8 场景全 PASS（29 个 PASS 行、坏控制帧负例全过、runner 汇总干净）。
+- **D波结论（任务#7 D 部分）**：源重启、peer 重连、controller 恢复、迟到回调攻击新拖拽、新代启动失败逐项覆盖；两代均有真实 selection 交付且旧身份被拒绝；故障只允许已登记精确 PID/启动身份/代际；先取消/reap 旧代确认 FD/设备/挂载释放再创建新代；外层 require_alive 与清理汇总保持严格。E toolkit 输入（任务#7 E 部分）未开始。阶段2整体仍不通过，不进入产品阶段3–8。
+
+### E波续作记录（2026-11-20，续上节，toolkit 输入层）
+
+- 路由二进制 `linux_input_toolkit_route.c`（359 行）：从输入矩阵提取专属 master 路由/注入，usage `route <viewable-xid>`；require_isolated 前缀/display 数字/Xauth/Pulse 校验（exit 2）；`XIAddMaster("Oink-Toolkit-<pid>", True, True)` 建专属 master 对+XTEST slaves（命名唯一性校验）；目标窗 viewable 校验；`XISetClientPointer` 返回不可靠，一律 `XIGetClientPointer` 回验；metacity 焦点 settle（20ms×2 轮询）；`XISetFocus`+`XkbSetDetectableAutoRepeat`；stdin 行命令 `cap/map/key/btn/rel/abs/pos/focus`，查询命令各回一行 JSON；EOF 释放 held 键钮、恢复 client pointer、`XIFloating` 移除 master、xerror 检查。
+- 编排 `linux_input_toolkit_scenarios.py`（391 行）+ `linux_input_toolkit_qt_row.py`（159 行）+ Qt 回调夹具 `linux_input_toolkit_qt.cpp`（72 行，`linux_input_toolkit_qt_build.py` c++17 -Werror 构建）+ 浏览器可信事件页 `linux_input_app_page.html`；共享 harness `linux_app_x11.py` 纯新增 `key(keycode, down)`（XTestFakeKeyEvent 封装）。八个矩阵行全 PASS（`INPUT_TOOLKIT_DONE rows=8 failures=0`，wave-6 日志）：
+  - `zenity-entry-text`：zenity --entry 真实 GTK 应用，Shift 和弦输入 `Ab3-z`，stdout 逐字节精确比对。
+  - `zenity-server-repeat`：按住 'a' 0.9s 得 7 presses/1 release（detectable autorepeat 模型）。
+  - `normal-input-comparison`：默认 master 打 'x' + 专属 master 打 'y' 得 `xy`，普通输入不误吞、不独占。
+  - `firefox-trusted-input` / `chrome-trusted-input`：真实浏览器内 keydown/keyup/wheel 全 `isTrusted=true`。
+  - `nemo-navigation-scroll`：nemo 真实窗口滚轮三向 xwd 截图两两不同（像素证据）。
+  - `nemo-key-navigation`：Ctrl+L→输入 `/tmp`→Return，窗口标题变 `tmp`。
+  - `qt-native-callback-delivery`：QTextEdit 原生回调验证扫描码/修饰键/AltGr/媒体键/四向滚轮符号/服务端重复。
+- 平台交付模型根因（12 轮诊断结论，已入记忆）：本 Xephyr 上 XI2 设备焦点（XISetFocus）对管理窗口不产生 FocusIn、键落 root；XTEST 键钮实际按 core PointerRoot focus+指针位置交付，窗口须在指针下；输入矩阵当年成功因其目标为 override-redirect 且指针在窗上。自研 GTK 夹具（gtk_window+text_view）对全部 XTEST 事件免疫（真实 GTK 应用正常），根因未查清，夹具弃用，GTK 证据改用真实应用（更强证人）。
+- Qt 重复模型：Qt xcb 未启用 detectable autorepeat，按住 'a' 得 7 press+7 release 成对（与 GTK/zenity detectable 形态 7 presses/1 release 不同）；断言按非 detectable 诚实模型（presses≥2 且 releases==presses 且末事件为 release）并记录差异。
+- 修复留痕：wave-4 唯一红行 qt 重复断言过严→改诚实模型；wave-5 暴露 qt_row 成功路径 `row` 回调未导入（旧路径只走行级 FAIL 从未到达）→补导入；红证据保留于 wave-4/5 日志，未抹除。
+- 关闭顺序约束：XIRemoveMaster 移除专属 master 时 toolkit XI2 记账可能引用已删设备（Qt SIGSEGV），必须先关应用再关 router（finally 顺序固定）。
+- 只读采集 XIScrollClass/XITouchClass/XIGestureClass 能力（cap 命令）；物理 HID/触摸板/锁屏留 F 波。每客户端事件选择（XSelectEvent per-client），xev -id 旁路观察不干扰 GDK。
+- 离线：`test_linux_input_toolkit.py` 8 项重写（guard/banned-token/路由结构/行名/页夹具/500 行门禁/路由零告警编译）；`test_linux_dnd_scenarios.py` 500 行门禁名单追加 6 个 E 波文件；全量 `discover -p 'test_linux*.py'` 264 项全 OK。
+- 回归义务：E 波改共享 `linux_app_x11.py`（纯新增方法），GTK scenarios+INCR+file 三套件各一轮原生回归（`e-regress-*.log`）：13+7+14 行全 PASS、零 FAIL、每会话 `native_test_summary` probe_exit/result/remaining_mounts 全 0、cleanup/services/mount_check 全真。首轮回归曾误用 `.release-tools/linux-probes/dnd-roles`（11-17 旧二进制，报告形状不匹配恒报 invalid report shape），换 canonical `.tools/fresh-20261117/bin/dnd-roles`（与当前源码同步重建、systemd-run 限额内编译零告警）后全绿；该旧二进制为历史产物，不再用于跑 suites。此前 D 波五轮 GTK 连续回归与 Qt 重建矩阵结论不受影响。
+- **E波结论（任务#7 E 部分）**：专属 master 路由、真实 GTK/Qt/浏览器输入交付、不误吞、修饰键/AltGr/媒体键/服务端重复、相对位移、双向滚轮逐项有证据；F 用户硬件门槛待办。
+
+### F波续作记录（2026-11-20，续上节，用户硬件门槛与收口）
+
+- FUSE：`.release-tools/linux-probes/fuse-user.log` 不存在（已只读核查），无既有证据。按当前源码（`linux_fuse_probe.c` SHA-256 `e08e5ec8…ad300`，自 11-17 未变更）在 systemd-run 限额（4G/CPU200%/Tasks256）内零告警新鲜重建，产物 SHA-256 `6aae95cf…834a`（mtime 2026-11-20 11:52:50）。§7.5 命令已交用户普通终端执行（代理不挂载；NoNewPrivs=1 下 setuid fusermount3 是既有阻塞，不换工具重试）。**用户已执行，代理只读核验通过**：`fuse-user.log` 唯一行 `private_fuse: content_and_offset=ok write_errno=30 expected=30`（EROFS=30 符合预期）+ 唯一 `native_test_summary` probe_exit/result/remaining_mounts 全 0、cleanup/services/mount_check 全真。FUSE 用户实证收口。
+- 硬件入口 `linux_hardware_acceptance.py`（238 行）+ 独立测试（98 行，12 项全过）：
+  - 默认 `status` 模式只打印操作说明与三份约定日志（`hardware-input-user.log`/`hardware-mic-user.log`/`fuse-user.log`）的存在性与尾部摘要，任何环境（含空 env）可运行、不触硬件。
+  - `input-collector`：用户令牌 `OINK_HARDWARE_USER=1` + 拒绝私有探针 scope（`OINK_NATIVE_TEST_ROOT` 存在即拒）；ctypes Xlib 建自有 360x160 窗口，仅对**本窗口**选择 Key/Button/Motion/FocusChange 事件（每客户端 mask，非全局监听），只聚合五类计数；FocusOut 即停（锁屏/会话切换如实记为 `focus_lost`）；不解码 keysym/keycode、不注入不 grab；JSON 行追加写约定日志。
+  - `mic-bridge --enable-mic --device <pactl 源名>`：同令牌+显式启用+设备名三重门；校验 `PULSE_SERVER` 必须是私有 runner socket；**真桥方向**：`parec` 用剥离私有 socket 的宿主 env 读用户指定真设备（`host_capture_env` 单测锁定），PCM 直送 `pacat --server=<私有 socket> --device=oink_test` 进私有 sink，中途仅即时计算 RMS dBFS 与字节计数写日志，不落任何音频正文；设备错误如实记 `device_error` 与双端退出码/错误尾部。
+  - 纯函数可测：`Collector.feed`（计数/停采语义/未知事件忽略）、`rms_db`（满幅≈0dBFS、静音−inf、半幅≈−6dB）。
+- 用户实测暴露两处入口缺陷已修：①采集窗未设 `WM_DELETE_WINDOW`，WM 关窗走 `XKillClient` 整连接被掐（用户实测 `X connection to :0 broken` 且零日志）——补协议+ClientMessage 优雅停（`window_closed`）并回归 13/14 项；②mic 桥初版误把 `parec` 指向私有 socket（读不到宿主设备）——改真桥方向并加 env 剥离单测（现 14/14 过）。
+- 麦克风桥根因链（用户首跑 `playback_exit=1 流错误：超时` 后定位）：私有音频栈**无会话管理器**，pulse 协议流永不自动链接——in-session 与 foreign 一样（实测 sink-input/source-output 恒 0）；pacat/pw-cat `--target` 请求无人执行；节点无会话管理器时不建端口；正确配方（复用音频套件 route() 实证）= `pw-cli set-param PortConfig`（dsp 模式强制建端口）+ `pw-link` 按声道显式连。foreign 客户端走 **core pipewire socket**（`oink-test`，module-access 对该 socket unrestricted，pw-dump 实测 foreign 权限 r-xm、节点可建、链接可建）而非 pulse socket。已还原 linux-native-test.py 的 PULSE_CONFIG（session-manager 模块为 1.0.x 空操作桩，无效且属共享 harness，不保留）。
+- 桥定稿 `linux_hardware_acceptance.py`（391 行）：`mic-bridge` = 宿主 `parec`（env 剥离私有 socket）读真设备 → RMS 旁路计数 → 宿主 `pw-cat -p` 经 core socket 建 `oink-mic-bridge` 节点 → PortConfig+pw-link 入 `oink_test` sink；`mic-consumer`（反向守卫，仅私有 scope 内运行）= 会话内 `pw-cat -r` 节点显式链接桥节点，RMS 行入 runner 日志。合成正弦端到端实证：foreign 桥节点→会话内消费者链路 active、消费者 RMS −11.7dB、nonzero 23960/24000。真机麦克风首跑已采到真实 RMS（−18.6/−32.2/−25.3/−36.3 dB，随说话起伏），差最终一次桥+消费者同跑收口。
+- 软件缺口如实记录：物理 HID/触摸板/触点/锁屏/精细滚动仍 BLOCKED 待用户实证；contacts `0x020b` 产品契约未声称端到端完成。
+- 离线全量 `discover -p 'test_linux*.py'` 276 项全 OK（新增 12 项）；两新文件入 500 行门禁名单。
+- 收口状态：A/A2/B/C/D/E 全部有证据；F 软件入口就绪，FUSE/物理输入/麦克风三类用户步骤已交付等待，用户完成后代理主动读取约定日志核验。阶段 2 汇总与交接文档更新待用户步骤证据到齐后一并收口。
+- **F 最终收口（同日续，用户硬件证据到齐）**：
+  - 物理输入：`hardware-input-user.log` 唯一 `input_stop reason=window_closed`——button_press/release 10/10、motion 262、key_press/release 0/0、focus_out 0。按钮与移动交付有实证；本轮采集窗内按键计数为 0，物理按键交付仍缺证据，不推断通过。
+  - 真实麦克风最终同跑（私有会话 `oink-native-6h3png1r`，桥先起、会话内消费者轮询后链接）：桥 `mic_start`→`mic_route links=1`（bridge 21→sink 16）→`mic_rms` 起于 −15.6 dB 随说话起伏→`mic_stop reason=timeout capture_exit=0 playback_exit=0`；消费者 `consumer_route links=1`（bridge 21→consumer 19）→持续 `consumer_rms`（nonzero≈2045/2048）→`consumer_stop exit=0 linked=1`；runner 唯一汇总 result/probe_exit/remaining_mounts=0、services/cleanup/mount_check 全真。真实麦克风→私有会话显式链接端到端收口。
+  - 收尾缺陷两处（用户实测暴露，均先红后绿、红证据保留）：③`playback` 以 `stderr=DEVNULL` 启动却在收尾读 `.stderr` → `AttributeError`（该次运行 `mic_stop` 未写出）；新增 `_stderr_tail` 空流安全并回归。④超时路径把自身 SIGTERM 收尾误记为设备错误（旧运行 `mic_stop reason=device_error capture_exit=0 playback_exit=1`）；新增 `_stop_process` 归一化操作者主动停止为 0、仅自退非零码计失败并回归。
+  - 回归：离线全量 `discover -p 'test_linux*.py'` 285 项 OK（41.2s，含硬件入口 21 项）；原生三套件 `e-regress-dnd-all/incr/file.log` 在 D/E 收口复跑全绿（summary 全 0 位、services/cleanup/mount_check 真，sessions=2 为 peer 所需），此后未改原生共享代码；F 仅新增独立入口与测试。`git diff --check` 通过，产品 `apps/`、`crates/` 零改动；未 commit/push/tag/发布。
+  - 阶段 2 判定：A/A2/B/C/D/E/FUSE/麦克风均有证据；仍缺物理按键（本轮 0）、锁屏/切换、触摸板/触点、精细滚动用户实证（BLOCKED），Chromium 合成拖拽起始为平台限制 BLOCKED（绊线保留），contacts `0x020b` 未声称端到端。**阶段 2 仍未通过，不进入产品阶段 3–8**。本轮汇总与交接见 [2026-11-20-linux-x11-phase2-af-waves.md](../handover/2026-11-20-linux-x11-phase2-af-waves.md)。
