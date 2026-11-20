@@ -4,7 +4,7 @@
 
 ## 0. 一句话状态
 
-阶段 3 的桌面壳接入已完成：Linux 编译/入口、真实 X11 input/display 后端、GLib 主循环、关窗隐藏与重显/reopen、系统托盘（StatusNotifierItem）与面板生命周期、前端 Linux 全分支、零告警全量门禁、测试基线裁定与文档收口。全量测试仍有 29 条**已登记存量失败**（阶段 4–5 范围），本轮引入 0 条；真实 Cinnamon 会话的托盘视觉验收**待用户确认**。阶段 4（完整输入语义/音频/剪贴板）尚未开始，产品功能不得表述为全部已支持。
+阶段 3 的桌面壳接入已完成：Linux 编译/入口、真实 X11 input/display 后端、GLib 主循环、关窗隐藏与重显/reopen、系统托盘（StatusNotifierItem）与面板生命周期、前端 Linux 全分支、零告警全量门禁、测试基线裁定与文档收口。全量测试仍有 29 条**已登记存量失败**（阶段 4–5 范围），本轮引入 0 条；真实 Cinnamon 会话的托盘视觉验收已由用户确认（2026-11-21）。阶段 4（完整输入语义/音频/剪贴板）尚未开始，产品功能不得表述为全部已支持。
 
 ## 1. 任务表
 
@@ -21,7 +21,7 @@
 | W5 | 托盘 SNI 探针（真实 D-Bus 链路） | 完成 | `build-support/linux_sni_watcher.py`、`linux_phase3_tray_probe.py`；中英各 18/18 |
 | W6 | 中文渲染与截图验收 | 完成（代理侧） | `w6/native`、`w6/preview`、`w6/rendering-notes.txt` |
 | W7 | 文档收口与 C4 本地提交 | 完成 | 本节 + `plan.md` 阶段 3 实施记录；C4 未推送 |
-| — | 真实 Cinnamon 会话托盘视觉验收 | **待用户确认** | 见 §8 命令 |
+| — | 真实 Cinnamon 会话托盘视觉验收 | 完成（用户确认） | 2026-11-21；记录 `w7/real-session-acceptance.txt` |
 
 ## 2. 接手先做的只读核验
 
@@ -84,6 +84,7 @@ DISPLAY=:0 python3 build-support/linux-native-test.py --timeout 300 -- \
 - W2/W3 回归：`w4/regression/{w2,w3}`，10/10 与 14/14。
 - 最终二进制：`target/debug/oink` 02:02:35 晚于 `apps/oink/dist/index.html` 02:02:19 与 `tray_linux.rs` 01:42:52，嵌入最终前端资产与托盘修复。
 - 最终二进制串行复跑（`w7/`）：W2 10/10、W3 14/14、托盘中文轮 18/18；面板 360×520，菜单含 `打开面板/显示主界面/退出 Oink`；`gate-summary.txt` 汇总全部门禁。
+- 真实会话验收（用户）：2026-11-21 用户确认托盘图标、菜单、面板开/关/重开、关窗后菜单重显、退出无残留全部通过；两次启动均以 `exiting UI end=Stopping` 干净退出。记录：`w7/real-session-acceptance.txt`。
 
 ### 4.3 视觉
 
@@ -123,15 +124,17 @@ DISPLAY=:0 python3 build-support/linux-native-test.py --timeout 300 -- \
 - **500 行门禁**：`linux_phase3_tray_probe.py` 恰 500 行，新增内容须先拆分/合并。
 - **前端预览**：headless Chrome 的 `--virtual-time-budget` 下 smooth scroll 不完成；截图脚本需直接设置 scroller.scrollTop。`permissions` 分区为 mac-only，Linux 下不出现属预期。
 
-## 8. 待用户确认（真实会话托盘）
+## 8. 真实会话托盘验收（已完成，2026-11-21）
 
-代理未向真实桌面注入、未自动启动。请用户在真实 Cinnamon 会话的普通终端执行：
+代理未向真实桌面注入、未自动启动。用户已在真实 Cinnamon 会话执行并确认：托盘出现 Oink 图标；菜单含「打开面板 / 显示主界面 / 退出 Oink」；面板可开、再点关闭、第三次重开；关闭主窗后仍能从托盘重显；退出后无残留进程。两次启动均以 `exiting UI end=Stopping` 干净退出，日志摘要见 `w7/real-session-acceptance.txt`。
+
+复查命令（零占位符）：
 
 ```bash
 /home/wgh/dev/cross_platform_app/oink/target/debug/oink
 ```
 
-确认项：托盘出现 Oink 图标；菜单含「打开面板 / 显示主界面 / 退出 Oink」；打开面板、再点关闭、第三次重开；关闭主窗后托盘仍可重显；退出后无残留进程。已知限制：面板在光标位置弹出。用户只需反馈现象；如需日志，代理读取 `~/.local/share/oink` 下的结构化日志核对。
+已知限制：面板在光标位置弹出。
 
 ## 9. 用户红线与禁止事项（继续生效）
 
@@ -147,7 +150,7 @@ DISPLAY=:0 python3 build-support/linux-native-test.py --timeout 300 -- \
 阶段 3 完成条件：W1–W7 全部落地 + 门禁绿或基线正式登记 + 文档收口 + C4 本地提交（未推送）。
 
 - 已完成：托盘真实注册/菜单/面板生命周期、前端 Linux 分支、零告警、29 条测试基线登记、中英渲染证据、文档。
-- 未完成/待确认：真实 Cinnamon 会话托盘视觉验收（用户步骤）；完整输入语义等属后续阶段。
+- 真实 Cinnamon 会话托盘视觉验收已由用户确认（2026-11-21）；完整输入语义等属后续阶段。
 - 结论：阶段 3 按上述 DoD 收口；不把后续阶段能力表述为已支持。
 
 ## 11. 交接记录
