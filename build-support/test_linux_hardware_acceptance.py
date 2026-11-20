@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import linux_hardware_acceptance as acceptance
+import linux_hardware_mic as mic
 
 
 class GuardTests(unittest.TestCase):
@@ -42,21 +43,21 @@ class GuardTests(unittest.TestCase):
 
 class CoreEnvTests(unittest.TestCase):
     def test_core_env_maps_pulse_socket_to_oink_test_remote(self):
-        env = acceptance.core_env('unix:/tmp/oink-native-abc/runtime/pulse-native')
+        env = mic.core_env('unix:/tmp/oink-native-abc/runtime/pulse-native')
         self.assertEqual(env['PIPEWIRE_RUNTIME_DIR'], '/tmp/oink-native-abc/runtime')
         self.assertEqual(env['PIPEWIRE_REMOTE'], 'oink-test')
         self.assertEqual(env['PIPEWIRE_CONFIG_NAME'], 'client.conf')
 
     def test_core_env_refuses_foreign_socket(self):
         with self.assertRaises(SystemExit):
-            acceptance.core_env('unix:/run/user/1000/pulse/native')
+            mic.core_env('unix:/run/user/1000/pulse/native')
 
     def test_consumer_refused_outside_probe_scope(self):
         old = dict(os.environ)
         os.environ.pop('OINK_NATIVE_TEST_ROOT', None)
         try:
             with self.assertRaises(SystemExit):
-                acceptance.run_mic_consumer(0.1)
+                mic.run_mic_consumer(0.1)
         finally:
             os.environ.update(old)
 
@@ -101,17 +102,40 @@ class CollectorTests(unittest.TestCase):
             collector.feed(event_type)
         self.assertEqual(sum(collector.snapshot()['counts'].values()), 0)
 
+    def test_deadline_expiry_uses_monotonic_seconds(self):
+        self.assertFalse(acceptance.deadline_expired(100.0, 5.0, now=104.9))
+        self.assertTrue(acceptance.deadline_expired(100.0, 5.0, now=105.0))
+
+    def test_focus_belongs_to_collector_window(self):
+        self.assertTrue(acceptance.focus_is_self(42, 42))
+        self.assertFalse(acceptance.focus_is_self(7, 42))
+        self.assertFalse(acceptance.focus_is_self(0, 42))
+        self.assertFalse(acceptance.focus_is_self(42, 0))
+
+    def test_focus_lost_only_final_after_hold(self):
+        self.assertFalse(acceptance.focus_lost_is_final(0.4))
+        self.assertTrue(acceptance.focus_lost_is_final(1.0))
+        self.assertTrue(acceptance.focus_lost_is_final(3.5))
+
+    def test_event_mask_bits_are_protocol_bits_not_event_types(self):
+        self.assertEqual(acceptance.KeyPressMask, 0x01)
+        self.assertEqual(acceptance.KeyReleaseMask, 0x02)
+        self.assertEqual(acceptance.ButtonPressMask, 0x04)
+        self.assertEqual(acceptance.ButtonReleaseMask, 0x08)
+        self.assertEqual(acceptance.PointerMotionMask, 0x40)
+        self.assertEqual(acceptance.StructureNotifyMask, 1 << 17)
+
 
 class RmsTests(unittest.TestCase):
     def test_full_scale_square_is_zero_dbfs(self):
-        self.assertAlmostEqual(acceptance.rms_db([32767, -32767] * 100), 0.0, places=1)
+        self.assertAlmostEqual(mic.rms_db([32767, -32767] * 100), 0.0, places=1)
 
     def test_silence_is_negative_infinity(self):
-        self.assertEqual(acceptance.rms_db([0] * 64), float('-inf'))
-        self.assertEqual(acceptance.rms_db([]), float('-inf'))
+        self.assertEqual(mic.rms_db([0] * 64), float('-inf'))
+        self.assertEqual(mic.rms_db([]), float('-inf'))
 
     def test_half_amplitude_is_about_minus_six_db(self):
-        level = acceptance.rms_db([16384, -16384] * 100)
+        level = mic.rms_db([16384, -16384] * 100)
         self.assertAlmostEqual(level, 20 * math.log10(0.5), places=1)
 
 
@@ -119,24 +143,24 @@ class ExitDiagnosticsTests(unittest.TestCase):
     def test_devnull_stderr_tail_is_empty(self):
         process = subprocess.Popen([sys.executable, '-c', 'pass'], stderr=subprocess.DEVNULL)
         process.wait()
-        self.assertEqual(acceptance._stderr_tail(process), '')
+        self.assertEqual(mic._stderr_tail(process), '')
 
     def test_captured_stderr_tail_keeps_last_chars(self):
         process = subprocess.Popen([sys.executable, '-c',
                                     'import sys; sys.stderr.write("x" * 300)'],
                                    stderr=subprocess.PIPE)
         process.wait()
-        self.assertEqual(acceptance._stderr_tail(process, 100), 'x' * 100)
+        self.assertEqual(mic._stderr_tail(process, 100), 'x' * 100)
 
     def test_running_child_stopped_by_operator_counts_as_orderly(self):
         process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-        self.assertEqual(acceptance._stop_process(process), 0)
+        self.assertEqual(mic._stop_process(process), 0)
         self.assertIsNotNone(process.returncode)
 
     def test_self_exited_child_keeps_its_code(self):
         process = subprocess.Popen([sys.executable, '-c', 'import sys; sys.exit(3)'])
         process.wait()
-        self.assertEqual(acceptance._stop_process(process), 3)
+        self.assertEqual(mic._stop_process(process), 3)
 
 
 class LogSchemaTests(unittest.TestCase):
@@ -144,7 +168,7 @@ class LogSchemaTests(unittest.TestCase):
         env = {'PULSE_SERVER': 'unix:/tmp/oink-native-x/runtime/pulse-native',
                'PIPEWIRE_RUNTIME_DIR': '/tmp/oink-native-x/runtime',
                'PIPEWIRE_REMOTE': 'oink-test', 'DISPLAY': ':0', 'HOME': '/home/wgh'}
-        clean = acceptance.host_capture_env(env)
+        clean = mic.host_capture_env(env)
         self.assertNotIn('PULSE_SERVER', clean)
         self.assertNotIn('PIPEWIRE_RUNTIME_DIR', clean)
         self.assertNotIn('PIPEWIRE_REMOTE', clean)
