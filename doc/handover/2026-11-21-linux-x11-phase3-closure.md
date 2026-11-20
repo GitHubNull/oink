@@ -2,6 +2,8 @@
 
 日期：2026-11-21。仓库：`github.com/GitHubNull/oink`（私有）。分支 `main`，本轮起点 HEAD `2114c19`（阶段 3 C1–C3 与 W1–W3 交接已推送）。C4 为**本地提交、未推送**：提交信息 `feat(linux): complete phase 3 with the tray, Linux UI branches and green gates`，SHA 见 `git log -1`。
 
+> 2026-11-21 后续：应要求，C4 `9de8223` 与验收记录 `a2ab43c` 已推送到 `origin/main`；本文档其余内容保留收口时快照。
+
 ## 0. 一句话状态
 
 阶段 3 的桌面壳接入已完成：Linux 编译/入口、真实 X11 input/display 后端、GLib 主循环、关窗隐藏与重显/reopen、系统托盘（StatusNotifierItem）与面板生命周期、前端 Linux 全分支、零告警全量门禁、测试基线裁定与文档收口。全量测试仍有 29 条**已登记存量失败**（阶段 4–5 范围），本轮引入 0 条；真实 Cinnamon 会话的托盘视觉验收已由用户确认（2026-11-21）。阶段 4（完整输入语义/音频/剪贴板）尚未开始，产品功能不得表述为全部已支持。

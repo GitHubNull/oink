@@ -408,7 +408,7 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - W4 测试基线：修复 watchdog fixture 竞态（deferred-arm：注册探针后再起表），7 条红 → 17 ok / 0 failed，断言未弱化。全量 `cargo test --locked --workspace --no-fail-fast`：112 target，rc=101，29 条失败全部为存量（10 剪贴板依赖、8 多节点/流、3 DnD、6 `oink-clipboard`、2 `oink-network`）；后 8 条在 HEAD `2114c19` 用独立 worktree 对照复现；本轮引入 0，不 skip、不删断言。`--autostart` 链路为 `handle_autostart_arg` → `LOGIN_LAUNCH_ENV` → `launched_at_login` → `shows_on_start`，后者有单测；XDG 登录项注册留阶段 7。
 - W5 托盘探针：新增 `build-support/linux_sni_watcher.py`（私有总线实现 StatusNotifierWatcher + dbusmenu 驱动）与 `linux_phase3_tray_probe.py`（Phase A 无宿主降级；Phase B 注册、菜单、面板开/关/重开、菜单显示主界面）。私有 Xephyr 内 18/18 checks；W2/W3 回归 10/10、14/14（`w4/regression/`）。
 - W6 中文渲染：私有 Xephyr `zh_CN.UTF-8` 下托盘探针 18/18（`w6/native`），主窗/面板截图中文正常；设置页 9 个 Linux 分区（general/appearance/layout/input/clipboard/audio/shortcuts/tools/diagnostics）无 tofu；`fc-match` 命中 Noto Sans CJK SC，回退 Droid Sans Fallback（`w6/rendering-notes.txt`）。真实 Cinnamon 会话验收由用户执行（2026-11-21 确认托盘图标、菜单、面板开/关/重开、关窗重显、退出无残留全部通过；记录 `w7/real-session-acceptance.txt`），代理未代启动、未注入。
-- W7 文档与 C4：本节与第七轮交接文档；C4 仅本地提交，未推送、未 tag。
+- W7 文档与 C4：本节与第七轮交接文档；C4 仅本地提交，未推送、未 tag。2026-11-21 后续用户要求提交并推送：`9de8223` 与验收记录 `a2ab43c` 已推送 `origin/main`；该次授权不延伸至后续代理。
 
 ### 已知限制（阶段 3 边界）
 
