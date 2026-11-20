@@ -4,10 +4,11 @@
 //! XRecord/XGrabKeyboard，所以 `capture_available()` 如实上报未接管，由路由层
 //! 发布故障码，而不是伪造「已截获」。注入只作用于本进程连接的那个 X server。
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use oink_foundation::Point;
 use oink_foundation::input::{CaptureMode, InjectEvent, PermissionState};
+use x11_dl::xinput2::XInput2;
 use x11_dl::xlib::{Display, Xlib};
 use x11_dl::xtest::Xf86vmode as Xtst;
 
@@ -38,14 +39,34 @@ pub(crate) fn backend() -> Result<Box<dyn InputBackend>, InputError> {
         unsafe { (xlib.XCloseDisplay)(dpy) };
         return Err(InputError::Platform("X 服务器缺少 XTEST 扩展，无法注入输入".into()));
     }
+    if let Err(error) = check_xi2(&xlib, dpy) {
+        // SAFETY: 连接由本函数独占，还没有交给其他线程。
+        unsafe { (xlib.XCloseDisplay)(dpy) };
+        return Err(error);
+    }
     Ok(Box::new(X11Input {
         xlib,
         xtest,
         conn: Mutex::new(Conn { dpy }),
-        mode: Mutex::new(CaptureMode::Local),
+        mode: Arc::new(Mutex::new(CaptureMode::Local)),
         scroll: Mutex::new((0.0, 0.0)),
+        ledger: Mutex::new(inject::Ledger::default()),
         capture: Mutex::new(None),
     }))
+}
+
+/// 版本与请求都能协商才算可用；失败按 Unsupported 如实上报。
+fn check_xi2(xlib: &Xlib, dpy: *mut Display) -> Result<(), InputError> {
+    let xi = XInput2::open().map_err(|e| InputError::Platform(format!("无法加载 libXi：{e}")))?;
+    let name = std::ffi::CString::new("XInputExtension").map_err(|_| InputError::Platform("扩展名无效".into()))?;
+    let (mut opcode, mut first_event, mut first_error) = (0, 0, 0);
+    // SAFETY: dpy 有效；name 以 NUL 结尾；三个 out 指针有效。
+    let present =
+        unsafe { (xlib.XQueryExtension)(dpy, name.as_ptr(), &mut opcode, &mut first_event, &mut first_error) };
+    if present == 0 {
+        return Err(InputError::Unsupported);
+    }
+    devices::negotiate(&xi, dpy).map(|_| ())
 }
 
 fn open_display(xlib: &Xlib) -> Result<*mut Display, InputError> {
@@ -72,8 +93,9 @@ pub(super) struct X11Input {
     pub(super) xlib: Xlib,
     pub(super) xtest: Xtst,
     pub(super) conn: Mutex<Conn>,
-    pub(super) mode: Mutex<CaptureMode>,
+    pub(super) mode: Arc<Mutex<CaptureMode>>,
     pub(super) scroll: Mutex<(f64, f64)>,
+    pub(super) ledger: Mutex<inject::Ledger>,
     pub(super) capture: Mutex<Option<capture::CaptureThread>>,
 }
 
@@ -134,9 +156,8 @@ impl X11Input {
 }
 
 impl InputBackend for X11Input {
-    fn start(&self, _handler: EventHandler) -> Result<(), InputError> {
-        // 阶段 3 只有路由 owner 的生命周期；回调式截获留阶段 4。
-        Err(InputError::Unsupported)
+    fn start(&self, handler: EventHandler) -> Result<(), InputError> {
+        capture::start_callback(self, handler)
     }
 
     fn start_loop(&self, owner: Box<dyn crate::capture_loop::CaptureLoop>) -> Result<(), InputError> {
@@ -147,12 +168,21 @@ impl InputBackend for X11Input {
         capture::stop(self);
     }
 
+    fn start_injection_session(&self) -> Result<(), InputError> {
+        inject::start_session(self);
+        Ok(())
+    }
+
+    fn stop_injection_session(&self) {
+        inject::release_all(self);
+    }
+
     fn capture_active(&self) -> Option<bool> {
         Some(self.capture.lock().map(|slot| slot.is_some()).unwrap_or(false))
     }
 
     fn set_mode(&self, mode: CaptureMode) -> Result<(), InputError> {
-        // 阶段 3 不 grab、不隐藏光标：记录模式，能力由 capture_available(false) 上报。
+        // W2 仍不 grab、不隐藏光标：记录模式供事件翻译使用，能力由 capture_available(false) 上报。
         *self
             .mode
             .lock()
@@ -196,6 +226,7 @@ impl InputBackend for X11Input {
 impl Drop for X11Input {
     fn drop(&mut self) {
         self.stop();
+        inject::release_all(self);
         if let Ok(conn) = self.conn.get_mut()
             && !conn.dpy.is_null()
         {

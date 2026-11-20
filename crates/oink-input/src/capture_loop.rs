@@ -132,7 +132,6 @@ pub(crate) fn clear() {
 }
 // Native hooks are the only producers; module tests exercise the reentrancy path.
 #[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn event(event: &CapturedEvent) -> Disposition {
     OWNER.with(|slot| {
         // Windows: SendInput issued from this hook thread while event()/poll()
@@ -152,7 +151,6 @@ pub(crate) fn event(event: &CapturedEvent) -> Disposition {
     })
 }
 #[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 static REENTERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
     OWNER.with(|slot| {

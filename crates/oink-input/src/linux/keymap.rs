@@ -22,6 +22,15 @@ pub(super) fn x_keycode(code: KeyCode) -> Option<u32> {
     Some(u32::from(evdev_code(code.usage())?) + 8)
 }
 
+/// X11 键码 → HID 用法（`x_keycode` 的反向）。evdev 43 同时对应 0x31/0x32，
+/// 反向扫描取先出现的 0x31。
+pub(super) fn hid_usage(keycode: u32) -> Option<KeyCode> {
+    let evdev = u16::try_from(keycode.checked_sub(8)?).ok()?;
+    (0x04..=0xE7)
+        .find(|usage| evdev_code(*usage) == Some(evdev))
+        .map(KeyCode::keyboard)
+}
+
 fn evdev_code(usage: u16) -> Option<u16> {
     // HID 0x04..=0x1D 按字母顺序 a..z；evdev 顺序不连续，用查表。
     const LETTERS: [u16; 26] = [
@@ -115,5 +124,18 @@ mod tests {
         assert_eq!(x_keycode(KeyCode::LEFT_CTRL), Some(37)); // evdev 29
         assert_eq!(x_keycode(KeyCode::keyboard(0x99)), None);
         assert_eq!(x_keycode(KeyCode::new(KeyCode::PAGE_CONSUMER, 0xE9)), None);
+    }
+
+    #[test]
+    fn evdev_keycodes_roundtrip_back_to_hid_usages() {
+        for usage in [
+            0x04_u16, 0x1D, 0x1E, 0x28, 0x29, 0x2C, 0x31, 0x3A, 0x44, 0x52, 0x68, 0x73, 0xE0, 0xE7,
+        ] {
+            let code = KeyCode::keyboard(usage);
+            assert_eq!(hid_usage(x_keycode(code).unwrap()), Some(code), "usage {usage:#x}");
+        }
+        assert_eq!(hid_usage(8), None);
+        assert_eq!(hid_usage(0), None);
+        assert_eq!(hid_usage(37), Some(KeyCode::LEFT_CTRL));
     }
 }
