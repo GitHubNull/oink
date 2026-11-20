@@ -1,7 +1,7 @@
 //! XFixes 输入形状。
 //!
 //! 覆盖层默认完全鼠标穿透：把 `ShapeInput` 设为空区域，点击与滚动落到底下的窗口；
-//! 需要点击的通知在后续波次里按可见卡片重新设置输入区域。
+//! 通知窗口按可见卡片逐行设置输入区域，装饰与透明像素仍穿透。
 
 use std::ptr;
 
@@ -14,8 +14,23 @@ const SHAPE_INPUT: i32 = 2;
 
 /// 让 `window` 不接收任何指针输入（鼠标穿透）。
 pub(crate) fn empty_input_shape(conn: &Connection, window: xlib::Window) {
-    // SAFETY: dpy 已打开且带 XFixes；矩形指针为 null、数量为 0 就是空区域。
-    let region = unsafe { (conn.xfixes.XFixesCreateRegion)(conn.dpy, ptr::null_mut(), 0) };
+    input_shape(conn, window, &[]);
+}
+
+/// 用窗口坐标里的矩形并集替换输入区域；空列表即完全穿透。
+pub(crate) fn input_shape(conn: &Connection, window: xlib::Window, rects: &[xlib::XRectangle]) {
+    // SAFETY: XFixesCreateRegion 只读取这些矩形，不保留指针。
+    let region = unsafe {
+        (conn.xfixes.XFixesCreateRegion)(
+            conn.dpy,
+            if rects.is_empty() {
+                ptr::null_mut()
+            } else {
+                rects.as_ptr().cast_mut()
+            },
+            rects.len() as i32,
+        )
+    };
     if region == 0 {
         tracing::debug!("cursor trail: XFixesCreateRegion failed; the overlay may capture input");
         return;

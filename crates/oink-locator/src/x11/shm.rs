@@ -101,9 +101,13 @@ fn write_rows(image: *mut XImage, pixels: &[u32], width: usize, height: usize) -
 }
 
 /// 一块附着到服务器的 SysV 共享内存，配合 XShmPutImage 使用。
+///
+/// `info` 必须在堆上：`XShmCreateImage` 把它的地址存进 `image->obdata`，
+/// `XShmPutImage` 经由该指针读取 `shmseg`；一旦移动结构体，栈槽会被后续
+/// 上传器覆盖，第二块共享段起就会带上错误的段 id。
 pub(crate) struct ShmBuffer {
     conn: Rc<Connection>,
-    info: XShmSegmentInfo,
+    info: Box<XShmSegmentInfo>,
     image: *mut XImage,
     address: *mut c_void,
     width: usize,
@@ -112,7 +116,7 @@ pub(crate) struct ShmBuffer {
 
 impl ShmBuffer {
     fn new(conn: Rc<Connection>, width: usize, height: usize) -> Option<Self> {
-        let (info, image, address) = attach(&conn, width, height)?;
+        let (mut info, image, address) = attach(&conn, width, height)?;
         // SAFETY: image 非空且由 XShmCreateImage 创建；布局字段不可变。
         let (bits, byte_order, stride, data) = unsafe {
             (
@@ -125,7 +129,6 @@ impl ShmBuffer {
         // 共享段按稠密行分配，所以这里也要求 Xlib 不填充行尾。
         if bits != 32 || !byte_order_matches(byte_order) || data.is_null() || stride as usize != width * 4 {
             tracing::debug!(bits, byte_order, stride, "cursor trail: unexpected XShm image layout");
-            let mut info = info;
             detach(&conn, &mut info, image, address);
             return None;
         }
@@ -182,7 +185,7 @@ impl ShmBuffer {
             // 避免 XDestroyImage 释放 shmat 得到的内存。
             unsafe {
                 if let Some(xshm) = self.conn.xshm.as_ref() {
-                    (xshm.XShmDetach)(self.conn.dpy, &mut self.info);
+                    (xshm.XShmDetach)(self.conn.dpy, &mut *self.info);
                     (self.conn.xlib.XSync)(self.conn.dpy, 0);
                 }
                 (*self.image).data = ptr::null_mut();
@@ -208,7 +211,7 @@ impl Drop for ShmBuffer {
 }
 
 /// 创建、附着共享段并建立 XShm XImage；失败时释放所有已取得的资源。
-fn attach(conn: &Connection, width: usize, height: usize) -> Option<(XShmSegmentInfo, *mut XImage, *mut c_void)> {
+fn attach(conn: &Connection, width: usize, height: usize) -> Option<(Box<XShmSegmentInfo>, *mut XImage, *mut c_void)> {
     let xshm = conn.xshm.as_ref()?;
     let size = width.checked_mul(height)?.checked_mul(4)?;
     let width = u32::try_from(width).ok()?;
@@ -227,12 +230,13 @@ fn attach(conn: &Connection, width: usize, height: usize) -> Option<(XShmSegment
         unsafe { shmctl(shmid, IPC_RMID, ptr::null_mut()) };
         return None;
     }
-    let mut info = XShmSegmentInfo {
+    // 堆上分配：XShmCreateImage 会保存这个地址，移动不能改变它。
+    let mut info = Box::new(XShmSegmentInfo {
         shmseg: 0,
         shmid,
         shmaddr: address.cast(),
         readOnly: 0,
-    };
+    });
     // SAFETY: dpy/visual 属于此连接；address 是至少 size 字节的已附着段。
     let image = unsafe {
         (xshm.XShmCreateImage)(
@@ -241,7 +245,7 @@ fn attach(conn: &Connection, width: usize, height: usize) -> Option<(XShmSegment
             conn.depth as u32,
             ZPixmap,
             address.cast(),
-            &mut info,
+            &mut *info,
             width,
             height,
         )
@@ -264,7 +268,7 @@ fn attach(conn: &Connection, width: usize, height: usize) -> Option<(XShmSegment
         return None;
     }
     // SAFETY: info/image 在 Detach 前一直存活；服务器附着共享段。
-    let attached = unsafe { (xshm.XShmAttach)(conn.dpy, &mut info) };
+    let attached = unsafe { (xshm.XShmAttach)(conn.dpy, &mut *info) };
     if attached == 0 {
         tracing::debug!("cursor trail: XShmAttach failed");
         // SAFETY: 附着失败，data 指向共享段，置空后再释放 XImage。

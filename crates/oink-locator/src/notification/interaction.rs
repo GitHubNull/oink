@@ -1,9 +1,9 @@
 //! Shared input semantics and oink-ui button transitions for both native renderers.
 use std::time::Instant;
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 use super::{Click, Frame};
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 use oink_foundation::{Point, Rect};
 
 /// Native button state for a visible toast; independent of focus and capture.
@@ -15,9 +15,9 @@ pub struct Feedback {
     /// Pointer is over the visible toast card, including Undo.
     pub toast_hovered: bool,
 }
-/// Native toast hit-testing is compiled only by the macOS/Windows renderers and
-/// the shared unit tests.
-#[cfg(any(target_os = "macos", windows, test))]
+/// Native toast hit-testing is compiled only by the macOS/Windows/Linux
+/// renderers and the shared unit tests.
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Input {
     Move(Point),
@@ -25,7 +25,7 @@ pub(super) enum Input {
     Up(Point),
     Leave,
 }
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 #[derive(Debug, Default)]
 pub(super) struct HitState {
     pub id: u64,
@@ -36,7 +36,7 @@ pub(super) struct HitState {
     toast_hovered: bool,
     mask: Option<Frame>,
 }
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 impl HitState {
     pub fn update(&mut self, id: u64, undo: Option<Rect>, interactive: bool) {
         if self.id != id || !interactive {

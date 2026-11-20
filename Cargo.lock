@@ -3365,6 +3365,7 @@ name = "oink-locator"
 version = "0.3.5"
 dependencies = [
  "cairo-rs",
+ "gio",
  "glib",
  "libc",
  "objc2",

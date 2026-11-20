@@ -14,6 +14,9 @@
 mod shape;
 mod shm;
 
+#[cfg(test)]
+pub(crate) mod probe;
+
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Once;
@@ -187,7 +190,63 @@ pub(crate) struct OverlayWindow {
     mapped: bool,
 }
 
+impl Connection {
+    /// 排空这条连接上的待处理事件（只在连接所属线程调用）。
+    pub(crate) fn drain_events(&self, mut handle: impl FnMut(&xlib::XEvent)) {
+        loop {
+            // SAFETY: XPending 只读连接状态，不消耗事件。
+            if unsafe { (self.xlib.XPending)(self.dpy) } <= 0 {
+                return;
+            }
+            // SAFETY: XEvent 是全零合法的 C POD；XNextEvent 写入一个完整事件。
+            let mut event: xlib::XEvent = unsafe { std::mem::zeroed() };
+            // SAFETY: dpy 有效，event 是有效的输出存储。
+            unsafe { (self.xlib.XNextEvent)(self.dpy, &mut event) };
+            handle(&event);
+        }
+    }
+
+    /// 测试专用：等服务器处理完这条连接上的上传与输入 shape（XShm 是异步的）。
+    #[cfg(test)]
+    pub(crate) fn sync(&self) {
+        // SAFETY: dpy 有效；discard=false。
+        unsafe { (self.xlib.XSync)(self.dpy, 0) };
+    }
+}
+
 impl OverlayWindow {
+    /// 窗口 ID，用于把收到的事件对回所属覆盖窗口。
+    pub(crate) fn id(&self) -> xlib::Window {
+        self.id
+    }
+
+    /// 订阅事件（在映射前调用）。
+    pub(crate) fn select_events(&self, mask: i64) {
+        // SAFETY: id 属于同一条连接；掩码只包含 Xlib 事件位。
+        unsafe { (self.conn.xlib.XSelectInput)(self.conn.dpy, self.id, mask) };
+    }
+
+    /// 按缓存的像素缓冲重新上传（Expose 重绘，不重建像素）。
+    pub(crate) fn redraw(&mut self) -> bool {
+        if self.upload.is_none() {
+            return false;
+        }
+        let Some(upload) = self.upload.as_mut() else {
+            return false;
+        };
+        if !upload.put(self.id, self.gc) {
+            self.upload = None;
+            self.upload_failed = true;
+            return false;
+        }
+        true
+    }
+
+    /// 设置窗口的输入区域；空切片即完全穿透。
+    pub(crate) fn set_input_shape(&self, rects: &[xlib::XRectangle]) {
+        shape::input_shape(&self.conn, self.id, rects);
+    }
+
     /// 在根窗口的 `rect`（设备像素，X11 根坐标）处创建窗口；不映射。
     pub(crate) fn new(conn: Rc<Connection>, rect: CellRect) -> Option<Self> {
         let (x, y, width, height) = window_geometry(rect)?;

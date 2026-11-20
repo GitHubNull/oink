@@ -138,10 +138,11 @@ impl Backend {
             );
             return;
         }
-        if !window.upload(pixels) {
-            return;
-        }
+        // 服务器不保证保留映射前的窗口内容（Xephyr 实测会丢弃），先映射再上传。
         window.map_raised();
+        if !window.upload(pixels) {
+            window.unmap();
+        }
     }
 
     pub(crate) fn hide(&mut self) {
@@ -218,7 +219,10 @@ fn physical_rect(rect: CellRect, cell: f64) -> Option<CellRect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::Kind;
+    use crate::x11::probe::Probe;
     use oink_foundation::Rect;
+    use x11_dl::xlib as xl;
 
     fn display(bounds: Rect) -> DisplayInfo {
         DisplayInfo {
@@ -288,5 +292,72 @@ mod tests {
         assert_eq!(physical_rect(rect(1, 2, 3, 4), f64::NAN), None);
         assert_eq!(physical_rect(rect(1, 2, 3, 4), -1.0), None);
         assert_eq!(physical_rect(rect(1, 2, 3, 4), 2.0), Some(rect(2, 4, 6, 8)));
+    }
+
+    #[test]
+    #[ignore = "需要私有 Xephyr：DISPLAY=:0 python3 build-support/linux-native-test.py --timeout 300 -- cargo test -p oink-locator linux::tests::xephyr_ -- --ignored --test-threads=1"]
+    fn xephyr_trail_uploads_argb_and_never_takes_input() {
+        let mut backend = Backend::new(Health::new(Kind::Trail)).expect("trail backend");
+        backend.set_displays(&[display(Rect::new(0., 0., 1280., 800.))]);
+        let probe = Probe::open();
+        let focus_before = probe.focus();
+
+        let layer = Layer {
+            surface: 0,
+            rect: rect(100, 100, 4, 2),
+            pixels: vec![0xffff_00ff; 8],
+        };
+        backend.present(1.0, vec![layer]);
+        backend.connection.sync();
+        probe.sync();
+
+        let window = backend.window.as_ref().expect("trail overlay").id();
+        let attributes = probe.attributes(window).expect("XGetWindowAttributes");
+        assert_eq!(attributes.depth, 32, "ARGB visual");
+        assert_ne!(attributes.override_redirect, 0, "override-redirect");
+        assert_eq!(attributes.map_state, xl::IsViewable, "mapped");
+        assert_eq!(
+            (attributes.x, attributes.y, attributes.width, attributes.height),
+            (100, 100, 4, 2)
+        );
+
+        let image = probe.window_image(window).expect("XGetImage");
+        assert_eq!(image.size(), (4, 2));
+        for y in 0..2 {
+            for x in 0..4 {
+                assert_eq!(image.pixel(x, y), 0xffff_00ff, "pixel ({x}, {y})");
+            }
+        }
+        drop(image);
+        assert_eq!(focus_before, probe.focus(), "mapping must not take focus");
+
+        // 空输入 shape：点击落在根窗口，拖尾窗口不取焦点。
+        probe.move_to(102, 101);
+        probe.sync();
+        probe.click();
+        probe.sync();
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        let mut through = false;
+        while !through && Instant::now() < deadline {
+            through = probe.take_root_press();
+            if !through {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        assert!(through, "the trail must pass clicks through to the root window");
+        assert_eq!(focus_before, probe.focus(), "clicks must not take focus");
+
+        backend.hide();
+        backend.connection.sync();
+        probe.sync();
+        let attributes = probe.attributes(window).expect("XGetWindowAttributes");
+        assert_eq!(attributes.map_state, xl::IsUnmapped, "hide unmaps the overlay");
+
+        println!(
+            "trail_argb_upload=ok depth={} override_redirect={} size={}x{} pixel={:08x}",
+            attributes.depth, attributes.override_redirect, attributes.width, attributes.height, 0xffff_00ffu32
+        );
+        println!("trail_click_through=ok passed_to_root={through}");
+        println!("trail_focus=ok window={} revert={}", focus_before.0, focus_before.1);
     }
 }

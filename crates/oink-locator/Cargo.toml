@@ -43,10 +43,12 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 x11-dl = "2.21"
 # SysV 共享内存（XShm 的客户端一侧）；版本已在工作区锁定。
 libc = "0.2"
-# 中文文字渲染（后续波次使用，先按阶段 4 计划接好依赖）。
+# 中文文字渲染（Pango + Cairo + Fontconfig）。
 pango = "0.18"
 cairo-rs = "0.18"
 glib = "0.18"
+# 通知 worker 读 Cinnamon 的 enable-animations。
+gio = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
