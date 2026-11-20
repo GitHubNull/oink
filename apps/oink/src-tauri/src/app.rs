@@ -520,6 +520,23 @@ pub fn run() {
         {
             crate::app::on_main(handle, crate::app_icon::refresh);
         }
+        #[cfg(target_os = "linux")]
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+            && label == "main"
+        {
+            // Closing the product window keeps sharing alive without a window;
+            // a second launch or the tray asks this same UI to show it again.
+            api.prevent_close();
+            if let Some(window) = handle.get_webview_window("main") {
+                if window.hide().is_ok() {
+                    tracing::info!(view = "main", "product window hidden on close");
+                }
+            }
+        }
         if let tauri::RunEvent::WindowEvent { label, event, .. } = &event {
             match event {
                 tauri::WindowEvent::Destroyed => {

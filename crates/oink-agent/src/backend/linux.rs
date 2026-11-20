@@ -118,18 +118,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_classification_prefers_wayland_and_requires_display() {
+    fn x11_sessions_are_accepted() {
         assert_eq!(classify_session(Some("x11"), None, Some(":99")), Session::X11);
+        assert_eq!(classify_session(Some("X11"), Some(""), Some(":99")), Session::X11);
+        assert_eq!(classify_session(None, None, Some(":0")), Session::X11);
+        assert!(refusal(Session::X11).is_none());
+    }
+
+    #[test]
+    fn wayland_sessions_are_refused_even_with_an_x11_display() {
         assert_eq!(
             classify_session(Some("wayland"), Some("wayland-0"), Some(":99")),
             Session::Wayland
         );
         assert_eq!(classify_session(None, Some("wayland-0"), Some(":99")), Session::Wayland);
-        assert_eq!(classify_session(Some("X11"), Some(""), Some(":99")), Session::X11);
+        assert!(refusal(Session::Wayland).unwrap().contains("Wayland"));
+    }
+
+    #[test]
+    fn missing_display_is_refused() {
         assert_eq!(classify_session(Some("x11"), None, Some("")), Session::NoDisplay);
         assert_eq!(classify_session(None, None, None), Session::NoDisplay);
-        assert!(refusal(Session::X11).is_none());
-        assert!(refusal(Session::Wayland).unwrap().contains("Wayland"));
         assert!(refusal(Session::NoDisplay).unwrap().contains("DISPLAY"));
     }
 }

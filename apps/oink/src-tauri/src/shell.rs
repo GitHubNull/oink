@@ -322,15 +322,10 @@ fn create_normal(app: &AppHandle, view: View) -> tauri::Result<()> {
     let created = app.get_webview_window(label).is_none();
     if created {
         tracing::info!(view = label, "creating product window");
-        let (width, height) = match view {
-            View::Main => (1040.0, 680.0),
-            View::About => (360.0, 500.0),
-            View::Quit => (480.0, 320.0),
-            View::Panel => unreachable!(),
-        };
+        let (width, height) = crate::shell_policy::normal_size(view);
         // The transparent gutter contains only the web silhouette's shadow.
         // Keep the actual product content at its original size/minimum.
-        let gutter = if view == View::Main { 24.0 } else { 0.0 };
+        let gutter = crate::shell_policy::shadow_gutter(view);
         let builder = builder(app, view)
             .inner_size(width + gutter * 2.0, height + gutter * 2.0)
             .center()
@@ -338,7 +333,10 @@ fn create_normal(app: &AppHandle, view: View) -> tauri::Result<()> {
             .focused(false);
         let builder = if view == View::Main {
             builder
-                .min_inner_size(820.0 + gutter * 2.0, 560.0 + gutter * 2.0)
+                .min_inner_size(
+                    crate::shell_policy::MAIN_MIN_WIDTH + gutter * 2.0,
+                    crate::shell_policy::MAIN_MIN_HEIGHT + gutter * 2.0,
+                )
                 .visible(false)
                 // Tauri/Wry clears both the native backing and WebView backing
                 // (including WKWebView drawsBackground/underPageBackgroundColor).

@@ -133,6 +133,16 @@ mod tests {
     }
 
     #[test]
+    fn reopen_entry_is_the_product_process_for_this_platform() {
+        #[cfg(target_os = "linux")]
+        assert_eq!(entry_name(), "oink");
+        #[cfg(windows)]
+        assert_eq!(entry_name(), "oink.exe");
+        #[cfg(target_os = "macos")]
+        assert_eq!(entry_name(), super::super::MAC_BACKEND_EXECUTABLE);
+    }
+
+    #[test]
     fn generic_call_validates_before_connecting() {
         let dir = tempfile::tempdir().unwrap();
         let error = call(dir.path(), "not_an_api", None).unwrap_err().to_string();

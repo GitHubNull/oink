@@ -190,6 +190,24 @@ mod window_ready_tests {
 pub const PANEL_WIDTH: f64 = 360.0;
 pub const PANEL_HEIGHT: f64 = 520.0;
 
+/// Product window content sizes. Linux constructs the same frames as Windows:
+/// an extra transparent gutter carries the web silhouette's shadow.
+pub(crate) fn normal_size(view: View) -> (f64, f64) {
+    match view {
+        View::Main => (1040.0, 680.0),
+        View::About => (360.0, 500.0),
+        View::Quit => (480.0, 320.0),
+        View::Panel => unreachable!("panel windows use PANEL_WIDTH/PANEL_HEIGHT"),
+    }
+}
+
+pub(crate) fn shadow_gutter(view: View) -> f64 {
+    if view == View::Main { 24.0 } else { 0.0 }
+}
+
+pub(crate) const MAIN_MIN_WIDTH: f64 = 820.0;
+pub(crate) const MAIN_MIN_HEIGHT: f64 = 560.0;
+
 /// Bounds in the anchor's coordinate space; clamp to the clicked monitor's
 /// usable frame, including negative origins and bottom/side Windows taskbars.
 pub fn panel_bounds(anchor: PanelAnchor, width: f64, height: f64) -> Option<PanelRect> {
@@ -252,6 +270,19 @@ mod tests {
         // The update dialog is a modal inside the main window.
         assert_eq!(View::from_label("upgrade"), None);
         assert!(serde_json::from_str::<View>("\"upgrade\"").is_err());
+    }
+
+    #[test]
+    fn product_window_sizes_match_the_native_constructor_contract() {
+        // Linux consumes these exact values through create_normal; keep the gate
+        // assertions here so a size change is visible without a window server.
+        assert_eq!(normal_size(View::Main), (1040.0, 680.0));
+        assert_eq!(shadow_gutter(View::Main), 24.0);
+        assert_eq!((MAIN_MIN_WIDTH, MAIN_MIN_HEIGHT), (820.0, 560.0));
+        assert_eq!(normal_size(View::About), (360.0, 500.0));
+        assert_eq!(shadow_gutter(View::About), 0.0);
+        assert_eq!(normal_size(View::Quit), (480.0, 320.0));
+        assert_eq!((PANEL_WIDTH, PANEL_HEIGHT), (360.0, 520.0));
     }
 
     #[test]
