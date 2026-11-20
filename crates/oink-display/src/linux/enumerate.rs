@@ -118,7 +118,7 @@ fn rotation_of(
     0
 }
 
-fn rotation_deg(rotation: x11_dl::xrandr::Rotation) -> u16 {
+pub(super) fn rotation_deg(rotation: x11_dl::xrandr::Rotation) -> u16 {
     let rotation = i32::from(rotation);
     if rotation & xrr::RR_Rotate_90 != 0 {
         90
