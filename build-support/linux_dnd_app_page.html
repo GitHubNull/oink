@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>oink dnd app fixture</title>
+<style>
+  body { font: 14px sans-serif; margin: 0; background: #f4f4f4; }
+  #src { position: absolute; left: 60px; top: 120px; width: 280px; height: 90px;
+         background: #cde; border: 2px solid #579; padding: 8px; }
+  #dst { position: absolute; left: 520px; top: 120px; width: 320px; height: 220px;
+         background: #ded; border: 2px solid #595; padding: 8px; }
+</style>
+</head>
+<body>
+<div id="src" draggable="true">drag me</div>
+<div id="dst">drop here</div>
+<script>
+(function () {
+  'use strict';
+  var src = document.getElementById('src');
+  var dst = document.getElementById('dst');
+  var payload = '';
+  var shaHex = '';
+
+  function post(report) {
+    return fetch('/report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(report)
+    }).catch(function () {});
+  }
+
+  function sha256(text) {
+    var bytes = new TextEncoder().encode(text);
+    return crypto.subtle.digest('SHA-256', bytes).then(function (digest) {
+      return Array.prototype.map.call(new Uint8Array(digest), function (b) {
+        return ('0' + b.toString(16)).slice(-2);
+      }).join('');
+    });
+  }
+
+  function center(el) {
+    var rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(window.screenX + rect.left + rect.width / 2),
+      y: Math.round(window.screenY + rect.top + rect.height / 2)
+    };
+  }
+
+  var alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  var random = new Uint32Array(64);
+  crypto.getRandomValues(random);
+  for (var i = 0; i < random.length; i++) payload += alphabet[random[i] % alphabet.length];
+  src.textContent = payload;
+
+  sha256(payload).then(function (hex) {
+    shaHex = hex;
+    return post({kind: 'ready', trusted: true, payload_sha256: hex, payload_length: payload.length});
+  });
+
+  setInterval(function () {
+    post({kind: 'locate', source: center(src), target: center(dst)});
+  }, 250);
+
+  var probes = 0;
+  document.addEventListener('mousedown', function (event) {
+    if (probes < 8) probes++;
+    else return;
+    post({kind: 'probe-mousedown', trusted: event.isTrusted, x: event.clientX, y: event.clientY});
+  });
+  document.addEventListener('mousemove', function (event) {
+    if (event.buttons) post({kind: 'probe-mousemove', trusted: event.isTrusted,
+                             x: event.clientX, y: event.clientY, buttons: event.buttons});
+  });
+
+  src.addEventListener('dragstart', function (event) {
+    event.dataTransfer.setData('text/plain', payload);
+    event.dataTransfer.effectAllowed = 'copy';
+    post({kind: 'dragstart', trusted: event.isTrusted,
+          types: Array.prototype.slice.call(event.dataTransfer.types),
+          sha256: shaHex});
+  });
+
+  var enters = 0, overs = 0;
+  dst.addEventListener('dragenter', function (event) {
+    if (enters < 4) enters++;
+    else return;
+    post({kind: 'probe-dragenter', trusted: event.isTrusted,
+          types: Array.prototype.slice.call(event.dataTransfer.types)});
+  });
+
+  dst.addEventListener('dragover', function (event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    if (overs < 2) overs++;
+    else return;
+    post({kind: 'probe-dragover', trusted: event.isTrusted,
+          effectAllowed: event.dataTransfer.effectAllowed});
+  });
+
+  dst.addEventListener('drop', function (event) {
+    event.preventDefault();
+    var text = event.dataTransfer.getData('text/plain');
+    var uri = event.dataTransfer.getData('text/uri-list') ||
+              event.dataTransfer.getData('text/x-moz-url');
+    var files = Array.prototype.map.call(event.dataTransfer.files, function (f) {
+      return {name: f.name, size: f.size};
+    });
+    var digests = Array.prototype.map.call(event.dataTransfer.files, function (f) {
+      return f.text().then(function (body) {
+        return sha256(body).then(function (h) { return {name: f.name, sha256: h}; });
+      });
+    });
+    Promise.all([sha256(text), sha256(uri)].concat(digests)).then(function (hashes) {
+      post({kind: 'drop', trusted: event.isTrusted,
+            matched: hashes[0] === shaHex && text.length === payload.length,
+            dropEffect: event.dataTransfer.dropEffect,
+            received_length: text.length, received_sha256: hashes[0], expected_sha256: shaHex,
+            types: Array.prototype.slice.call(event.dataTransfer.types),
+            uri_length: uri.length, uri_sha256: hashes[1], files: files,
+            file_digests: hashes.slice(2)});
+    });
+  });
+
+  src.addEventListener('dragend', function (event) {
+    post({kind: 'dragend', trusted: event.isTrusted, dropEffect: event.dataTransfer.dropEffect});
+  });
+})();
+</script>
+</body>
+</html>

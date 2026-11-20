@@ -98,6 +98,7 @@ def private_environment(root, original):
         'PIPEWIRE_CONFIG_DIR': str(config / 'pipewire'),
         'PULSE_SERVER': f'unix:{runtime}/pulse-native',
         'PULSE_CLIENTCONFIG': str(config / 'pulse-client.conf'),
+        'NO_AT_BRIDGE': '1',
         'CARGO_HOME': original.get('CARGO_HOME', str(Path(original['HOME']) / '.cargo')),
         'RUSTUP_HOME': original.get('RUSTUP_HOME', str(Path(original['HOME']) / '.rustup')),
         'CARGO_BUILD_JOBS': '2', 'RUST_TEST_THREADS': '2',
@@ -201,8 +202,19 @@ class Session:
                 raise RuntimeError('Private Xephyr host-input forwarding is still enabled')
 
     def start_dbus(self):
+        # Portals must never spawn inside the scope; only the file-manager gvfs
+        # core is activation-visible (volume monitors stay blocked: they talk to
+        # physical devices and are not needed for a folder window).
+        services = self.root / 'data' / 'dbus-1' / 'services'
+        services.mkdir(mode=0o700, parents=True)
+        host_services = Path('/usr/share/dbus-1/services')
+        for name in ('org.gtk.vfs.Daemon.service', 'org.gtk.vfs.Metadata.service'):
+            source = host_services / name
+            if source.is_file():
+                (services / name).symlink_to(source)
+        env = dict(self.env, XDG_DATA_DIRS=str(self.root / 'data'))
         self.start('dbus', ['dbus-daemon', '--session', '--nofork',
-                   '--address=' + self.env['DBUS_SESSION_BUS_ADDRESS']])
+                   '--address=' + self.env['DBUS_SESSION_BUS_ADDRESS']], environment=env)
         self.wait_ready(lambda: self.run(['dbus-send', '--session', '--print-reply',
                         '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
                         'org.freedesktop.DBus.ListNames'], timeout=1))
@@ -276,10 +288,12 @@ def require_resource_limits():
     memory = (scope / 'memory.max').read_text().strip()
     quota, period = (scope / 'cpu.max').read_text().split()
     tasks = (scope / 'pids.max').read_text().strip()
+    # TasksMax was raised 256 -> 1024 with user approval on 2026-11-17: real
+    # Chromium needs far more threads than Firefox/GTK; memory/CPU unchanged.
     if (memory == 'max' or int(memory) > 4 * 1024 ** 3
             or quota == 'max' or int(quota) > 2 * int(period)
-            or tasks == 'max' or int(tasks) > 256):
-        raise RuntimeError('Native tests require MemoryMax<=4G, CPUQuota<=200% and TasksMax<=256')
+            or tasks == 'max' or int(tasks) > 1024):
+        raise RuntimeError('Native tests require MemoryMax<=4G, CPUQuota<=200% and TasksMax<=1024')
 
 
 def interrupt(_signum, _frame):
@@ -385,7 +399,7 @@ def main():
         parser.error('A host X display is required for Xephyr')
     if not args.inside_scope:
         command = ['systemd-run', '--user', '--scope', '--quiet', '-p', 'MemoryMax=4G',
-                   '-p', 'CPUQuota=200%', '-p', 'TasksMax=256',
+                   '-p', 'CPUQuota=200%', '-p', 'TasksMax=1024',
                    sys.executable, str(Path(__file__).resolve()), '--inside-scope',
                    *sys.argv[1:]]
         return subprocess.call(command)

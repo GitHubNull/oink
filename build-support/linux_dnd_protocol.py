@@ -3,8 +3,11 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import selectors
+import socket
 import stat
+import struct
 import subprocess
 import time
 
@@ -15,9 +18,29 @@ FIELDS = ("gen xid x y source_xid owner epoch armed begin end failed cancelled g
           "motions visits leaves inside held_checks returned free_checks selected "
           "button length hash pending stale slow_requests slow_sent slow_abandoned "
           "clip_owner clip_checks clip_bad digest0 digest1 digest2 digest3 "
-          "digest4 digest5 digest6 digest7 toolkit_grabbed").split()
+          "digest4 digest5 digest6 digest7 toolkit_grabbed app "
+          "incr_handshake incr_chunks incr_bytes incr_done "
+          "incr_sent incr_sent_bytes incr_abandoned "
+          "bridge_chunks bridge_bytes bridge_bad "
+          "file_requests file_reads file_entries file_bytes file_bad "
+          "staged published").split()
 (STATUS, ARM, FOCUS, MOVE, DOWN, UP, ESCAPE, HELD, FREE, READ_SELECTION, LOAD,
- CLIP_CHECK, DELAY, DISARM, QUIT, RETURNED, FETCH, ORPHAN_UP) = range(18)
+ CLIP_CHECK, DELAY, DISARM, QUIT, RETURNED, FETCH, ORPHAN_UP, ARM_APP,
+ FETCH_STREAM, LOAD_STREAM, FILE_READ, FILE_STAGE, FILE_VERIFY,
+ GENERATION) = range(25)
+PAYLOAD_MAX = 8 * 1024 * 1024
+STREAM_CHUNK_MAX = 64 * 1024
+# Binary payload channel header: magic u32, epoch u32, generation u32,
+# transfer u32, mime u32, flags u32, offset u64, total u64, chunk_len u32
+# (all little-endian), then chunk_len body bytes.
+STREAM_HEADER = '<IIIIIIQQI'
+STREAM_MAGIC = 0x4F4E4B31  # 'ONK1' per-chunk framing sanity
+STREAM_TERMINATE = 1
+STREAM_FLAG_ERROR = 2
+MIME_UTF8 = 0
+MIME_TEXT = 1
+MIME_URI_LIST = 2
+MIME_OCTET = 3
 
 
 class Failure(RuntimeError):
@@ -67,7 +90,7 @@ def isolated_environment(environment):
     return dict(expected, DISPLAY=display, OINK_NATIVE_TEST_ROOT=root,
                 PATH='/usr/bin:/bin', LANG='C.UTF-8', LC_ALL='C.UTF-8',
                 GDK_BACKEND='x11', QT_QPA_PLATFORM='xcb', XDG_SESSION_TYPE='x11',
-                PIPEWIRE_REMOTE='oink-test')
+                PIPEWIRE_REMOTE='oink-test', NO_AT_BRIDGE='1')
 
 
 def peer_environment(primary, metadata):
@@ -130,9 +153,15 @@ class Role:
         self.name, self.seq, self.generation = name, 0, 1
         self.framer, self.frames, self.errors = Framer(), [], bytearray()
         self.selector = selectors.DefaultSelector()
-        self.process = subprocess.Popen([str(binary), name], env=isolated_environment(environment),
+        self.stream_sock, role_sock = socket.socketpair()
+        environment = isolated_environment(environment)
+        environment['OINK_STREAM_FD'] = str(role_sock.fileno())
+        self.process = subprocess.Popen([str(binary), name], env=environment,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, bufsize=0, close_fds=True)
+                                        stderr=subprocess.PIPE, bufsize=0, close_fds=True,
+                                        pass_fds=(role_sock.fileno(),))
+        role_sock.close()
+        os.set_blocking(self.stream_sock.fileno(), False)
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             os.set_blocking(stream.fileno(), False)
         self.selector.register(self.process.stdout, selectors.EVENT_READ, 'out')
@@ -181,6 +210,28 @@ class Role:
               f'{self.name}: incomplete window readiness')
         return report
 
+    def send_wire(self, opcode, *arguments, generation=None):
+        """Write a command without waiting for its (possibly deferred) response."""
+        self.seq += 1
+        gen = self.generation if generation is None else generation
+        values = (self.seq, opcode, gen, *arguments)
+        check(all(isinstance(v, int) and 0 <= v <= 0xffffffff for v in values), 'invalid command integers')
+        wire = (' '.join(map(str, values)) + '\n').encode('ascii')
+        check(len(wire) < MAX_LINE, 'oversized command')
+        deadline = time.monotonic() + 5
+        # Nonblocking write with a deadline even if a role never drains stdin.
+        with selectors.DefaultSelector() as writer:
+            writer.register(self.process.stdin, selectors.EVENT_WRITE)
+            while wire:
+                left = deadline - time.monotonic()
+                check(left > 0 and writer.select(left), f'{self.name}: command write deadline')
+                try:
+                    count = os.write(self.process.stdin.fileno(), wire)
+                except BlockingIOError:
+                    continue
+                wire = wire[count:]
+        return self.seq
+
     def command(self, opcode, *arguments, generation=None, expected=0, timeout=2):
         self.seq += 1
         gen = self.generation if generation is None else generation
@@ -202,7 +253,7 @@ class Role:
                 wire = wire[count:]
         status, report, body = self.receive(self.seq, deadline, allow_data=opcode == FETCH)
         check(status == expected, f'{self.name}: opcode {opcode} status {status}, expected {expected}')
-        if opcode == ARM and status == 0:
+        if opcode in (ARM, ARM_APP, GENERATION) and status == 0:
             self.generation = gen
         check(report['gen'] == self.generation, f'{self.name}: unexpected generation')
         if opcode == FETCH and status == 0:
@@ -219,5 +270,103 @@ class Role:
                 self.process.kill()
                 self.process.wait(timeout=1)
         self.selector.close()
+        self.stream_sock.close()
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             stream.close()
+
+
+def bridge_payload(catcher, proxy, timeout=15):
+    """Relay a catcher FETCH_STREAM body into proxy LOAD_STREAM, validating every
+    frame header (magic, epoch/generation, offset continuity, bounded chunk,
+    terminate flag only on the final chunk covering the declared total)."""
+    check(catcher.name == 'catcher' and proxy.name == 'proxy', 'bridge relays catcher to proxy only')
+    total = catcher.last['length']
+    epoch = catcher.last['epoch']
+    check(0 < total <= PAYLOAD_MAX and catcher.last['hash'], 'catcher payload ready')
+    check(catcher.generation == proxy.generation, 'bridge requires a shared generation')
+    proxy_seq = proxy.send_wire(LOAD_STREAM, total, epoch, catcher.generation)
+    catcher.command(FETCH_STREAM)
+    deadline = time.monotonic() + timeout
+    buf, out = bytearray(), bytearray()
+    forwarded, terminated = 0, False
+    with selectors.DefaultSelector() as sel:
+        sel.register(catcher.stream_sock, selectors.EVENT_READ, 'catch')
+        sel.register(proxy.stream_sock, selectors.EVENT_WRITE, 'send')
+        while True:
+            left = deadline - time.monotonic()
+            check(left > 0, 'stream bridge deadline')
+            events = sel.select(left)
+            check(events, 'stream bridge deadline')
+            for key, mask in events:
+                if key.data == 'send':
+                    if mask & selectors.EVENT_WRITE and out:
+                        try:
+                            count = proxy.stream_sock.send(out)
+                            del out[:count]
+                        except BlockingIOError:
+                            pass
+                    continue
+                if terminated:
+                    continue
+                chunk = catcher.stream_sock.recv(STREAM_CHUNK_MAX + 4096)
+                check(chunk, 'catcher stream closed mid-transfer')
+                buf.extend(chunk)
+                while len(buf) >= 44:
+                    magic, ep, gen, transfer, mime, flags, offset, size, clen = \
+                        struct.unpack_from(STREAM_HEADER, buf)
+                    if len(buf) < 44 + clen:
+                        break
+                    check(magic == STREAM_MAGIC and mime <= MIME_OCTET, 'stream frame magic/mime')
+                    check(ep == epoch and gen == catcher.generation, 'stale stream frame epoch/generation')
+                    check(clen and clen <= STREAM_CHUNK_MAX and size == total
+                          and offset == forwarded, 'stream frame offset/size mismatch')
+                    check(flags & ~STREAM_TERMINATE == 0, 'unknown stream flags')
+                    frame = bytes(buf[44:44 + clen])
+                    del buf[:44 + clen]
+                    out.extend(struct.pack(STREAM_HEADER, magic, ep, gen, transfer, mime,
+                                           flags, offset, size, clen))
+                    out.extend(frame)
+                    forwarded += clen
+                    if flags & STREAM_TERMINATE:
+                        check(forwarded == total, 'terminate before declared total')
+                        terminated = True
+            if terminated and not out:
+                break
+    check(terminated, 'catcher stream ended without terminate flag')
+    status, report, body = proxy.receive(proxy_seq, deadline)
+    check(status == 0 and body is None, f'proxy LOAD_STREAM status {status}')
+    check(report['bridge_bytes'] == total and not report['bridge_bad'],
+          'proxy did not ingest a clean full payload')
+    return report
+
+
+def stream_feed(role, payload, timeout=15, mime=MIME_UTF8):
+    """Push a binary payload into a source role (source or proxy) via LOAD_STREAM."""
+    check(role.name in ('source', 'proxy'), 'feed targets source roles only')
+    total = len(payload)
+    check(role.last and role.last['xid'] and 0 < total <= PAYLOAD_MAX, 'feed size/role state')
+    check(mime <= MIME_OCTET, 'stream feed mime')
+    seq = role.send_wire(LOAD_STREAM, total, role.last['epoch'], role.generation)
+    deadline = time.monotonic() + timeout
+    offset, transfer = 0, 1
+    while offset < total:
+        chunk = payload[offset:offset + STREAM_CHUNK_MAX]
+        flags = STREAM_TERMINATE if offset + len(chunk) == total else 0
+        frame = struct.pack(STREAM_HEADER, STREAM_MAGIC, role.last['epoch'],
+                            role.generation, transfer, mime, flags,
+                            offset, total, len(chunk)) + chunk
+        while frame:
+            left = deadline - time.monotonic()
+            check(left > 0, 'stream feed deadline')
+            _, writable, _ = select.select([], [role.stream_sock], [], left)
+            check(writable, 'stream feed deadline')
+            try:
+                count = role.stream_sock.send(frame)
+            except BlockingIOError:
+                continue
+            frame = frame[count:]
+        offset += len(chunk)
+    status, report, body = role.receive(seq, deadline)
+    check(status == 0 and body is None, f'{role.name} LOAD_STREAM status {status}')
+    check(report['length'] == total and report['hash'], 'feed payload not ingested')
+    return report

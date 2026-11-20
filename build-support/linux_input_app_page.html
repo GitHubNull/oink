@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>oink input probe</title>
+<style>html,body{height:100%;margin:0}#pad{height:100%;display:flex;align-items:center;justify-content:center;font:24px monospace;outline:none}</style>
+</head>
+<body>
+<div id="pad" tabindex="0">oink input probe (focus me)</div>
+<script>
+const pad = document.getElementById('pad');
+function report(kind, facts) {
+  fetch('/report', {method: 'POST', body: JSON.stringify({kind, ...facts})});
+}
+addEventListener('keydown', e => report('probe-key', {
+  trusted: e.isTrusted, key: e.key, code: e.code, alt: e.altKey, ctrl: e.ctrlKey,
+  shift: e.shiftKey, meta: e.metaKey, repeat: e.repeat}));
+addEventListener('keyup', e => report('probe-keyup', {
+  trusted: e.isTrusted, key: e.key, code: e.code}));
+addEventListener('wheel', e => report('probe-wheel', {
+  trusted: e.isTrusted, delta_x: e.deltaX, delta_y: e.deltaY}), {passive: true});
+addEventListener('mousedown', e => report('probe-mousedown', {
+  trusted: e.isTrusted, button: e.button}));
+report('probe-ready', {trusted: true, agent: navigator.userAgent.length});
+pad.focus();
+</script>
+</body>
+</html>

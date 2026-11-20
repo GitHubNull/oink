@@ -150,6 +150,21 @@ class SessionTests(SafeCase):
         self.assertIn('--address=' + session.env['DBUS_SESSION_BUS_ADDRESS'], command)
         self.assertNotIn('--system', command)
         self.assertTrue(any('--session' in c.args[0] for c in run.call_args_list))
+        env = start.call_args.kwargs['environment']
+        self.assertEqual(env['XDG_DATA_DIRS'], str(session.root / 'data'))
+        self.assertNotIn('XDG_DATA_DIRS', session.env)
+
+    def test_dbus_activation_exposes_only_gvfs_core(self):
+        session = self.session()
+        with mock.patch.object(session, 'start'), mock.patch.object(session, 'run'):
+            session.start_dbus()
+        services = (session.root / 'data' / 'dbus-1' / 'services').iterdir()
+        names = {p.name for p in services}
+        self.assertTrue(names <= {'org.gtk.vfs.Daemon.service', 'org.gtk.vfs.Metadata.service'})
+        self.assertNotIn('org.freedesktop.portal.Desktop.service', names)
+        for path in (session.root / 'data' / 'dbus-1' / 'services').iterdir():
+            if path.name.startswith('org.gtk.vfs.'):
+                self.assertTrue(path.is_symlink())
 
     def test_run_is_checked_bounded_and_private(self):
         session = self.session()
@@ -433,7 +448,7 @@ class MainTests(SafeCase):
             isolated.assert_not_called()
         command = call.call_args.args[0]
         self.assertEqual(command[0], 'systemd-run')
-        for required in ('--user', '--scope', 'MemoryMax=4G', 'CPUQuota=200%', 'TasksMax=256'):
+        for required in ('--user', '--scope', 'MemoryMax=4G', 'CPUQuota=200%', 'TasksMax=1024'):
             self.assertIn(required, command)
         self.assertIn('--inside-scope', command)
         self.assertIn(str(RUNNER.resolve()), command)
@@ -460,11 +475,11 @@ class MainTests(SafeCase):
 
     def test_effective_cgroup_limits_accept_bounds_and_reject_unbounded_values(self):
         defaults = {'cgroup': '0::/unit.scope\n', 'memory.max': str(4 * 1024 ** 3),
-                    'cpu.max': '200000 100000', 'pids.max': '256'}
+                    'cpu.max': '200000 100000', 'pids.max': '1024'}
         cases = [({}, False), ({'memory.max': 'max'}, True),
                  ({'memory.max': str(4 * 1024 ** 3 + 1)}, True),
                  ({'cpu.max': 'max 100000'}, True), ({'cpu.max': '200001 100000'}, True),
-                 ({'pids.max': 'max'}, True), ({'pids.max': '257'}, True)]
+                 ({'pids.max': 'max'}, True), ({'pids.max': '1025'}, True)]
         for changes, rejected in cases:
             with self.subTest(changes=changes):
                 values = dict(defaults, **changes)

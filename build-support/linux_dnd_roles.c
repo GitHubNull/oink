@@ -1,4 +1,7 @@
 #include "linux_dnd_roles.h"
+#include "linux_dnd_incr.h"
+#include "linux_dnd_stream.h"
+#include "linux_dnd_file.h"
 #include <glib-unix.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,7 +14,8 @@ GdkDragContext *source_context, *incoming_context;
 bool is_source, is_proxy, is_catcher, is_sentinel;
 static char output[16384];
 static size_t output_used;
-static GtkTargetEntry targets[] = {{"UTF8_STRING", 0, 1}};
+static GtkTargetEntry targets[] = {{"UTF8_STRING", 0, 1}, {"text/plain", 0, 2},
+                                   {"text/uri-list", 0, 3}};
 
 void require(bool condition, const char *message) {
     if (condition) return;
@@ -118,7 +122,7 @@ static void deleted(GtkWidget *widget, GdkDragContext *context, gpointer data) {
 static gboolean dragged(GtkWidget *widget, GdkDragContext *context, gint x, gint y,
                         guint time, gpointer data) {
     (void)widget; (void)x; (void)y; (void)data;
-    if (!selection_identity(context)) {
+    if (!identity_valid(context)) {
         gdk_drag_status(context, 0, time);
         return TRUE;
     }
@@ -137,7 +141,7 @@ static void left(GtkWidget *widget, GdkDragContext *context, guint time, gpointe
     if (context == incoming_context) { r.inside = 0; r.leaves++; }
 }
 static void request_selection(GdkDragContext *context, guint time) {
-    require(!r.pending && context && selection_identity(context), "one valid asynchronous selection read");
+    require(!r.pending && context && identity_valid(context), "one valid asynchronous selection read");
     r.pending = 1; pending_epoch = r.epoch; pending_gen = r.gen;
     pending_context = g_object_ref(context);
     gtk_drag_get_data(box, context, data_target, time);
@@ -145,7 +149,7 @@ static void request_selection(GdkDragContext *context, guint time) {
 static gboolean dropped(GtkWidget *widget, GdkDragContext *context, gint x, gint y,
                         guint time, gpointer data) {
     (void)widget; (void)x; (void)y; (void)data;
-    require(!is_catcher && context == incoming_context && selection_identity(context)
+    require(!is_catcher && context == incoming_context && identity_valid(context)
             && ++r.drop == 1 && gdk_drag_context_get_selected_action(context) == GDK_ACTION_COPY,
             "target COPY drop on armed source XID/selection owner/generation");
     request_selection(context, time);
@@ -158,8 +162,20 @@ static unsigned long dispatch(unsigned long *v, size_t n) {
     unsigned long *a = v + 3;
     if (op == ARM && !is_source && argc == 1 && a[0] && generation >= r.gen) {
         r.gen = generation; expected_source = a[0]; r.armed = 1; r.epoch++;
-        r.inside = 0; payload_clear();
+        r.app = 0; app_armed = false; r.inside = 0; r.drop = 0; payload_clear();
         return 0;
+    }
+    if (op == ARM_APP && !is_source && argc == 3 && a[0] && generation >= r.gen && a[1] && a[2]) {
+        r.gen = generation; expected_source = a[0]; r.armed = 1; r.epoch++;
+        r.app = 1; app_armed = true; app_pid = a[1]; app_epoch = a[2];
+        r.inside = 0; r.drop = 0; payload_clear();
+        return 0;
+    }
+    if (op == GENERATION && is_source && !argc && generation > r.gen && !r.begin && !r.down) {
+        /* Supervisor-assigned new generation: the source publishes this number
+         * on its next drag, so an already-armed peer accepts the fresh identity
+         * and keeps refusing the old generation. Mid-drag adoption is refused. */
+        r.gen = generation; return 0;
     }
     if (generation != r.gen) return 1;
     switch (op) {
@@ -193,8 +209,8 @@ static unsigned long dispatch(unsigned long *v, size_t n) {
         if (!is_catcher || argc || !r.armed || !r.inside || r.pending || !incoming_context) return 2;
         request_selection(incoming_context, GDK_CURRENT_TIME); return 0;
     case LOAD:
-        if (!is_proxy || r.begin || body_length || argc < 2 || a[0] > PAYLOAD_MAX
-                || a[0] != argc - 1 || !a[0]) return 2;
+        if (!is_proxy || r.begin || body_length || argc < 2 || !a[0] || a[0] > 128
+                || a[0] != argc - 1) return 2;
         for (size_t i = 1; i < argc; i++) if (a[i] > 255) return 2;
         body_length = a[0];
         for (size_t i = 0; i < body_length; i++) body[i] = (unsigned char)a[i + 1];
@@ -203,17 +219,37 @@ static unsigned long dispatch(unsigned long *v, size_t n) {
         if (argc != 1 || !a[0]) return 2;
         selection_check_clipboard(a[0]); return 0;
     case DELAY:
-        if (!is_source || argc != 1 || a[0] > 3000 || r.get) return 2;
+        if (!is_source || argc != 1 || a[0] > 3000 || r.get
+                || body_length > INCR_THRESHOLD) return 2;
         slow_ms = (unsigned int)a[0]; return 0;
     case DISARM:
         if (is_source || argc) return 2;
-        r.armed = 0; r.epoch++; r.inside = 0; payload_clear();
+        r.armed = 0; r.epoch++; r.app = 0; app_armed = false; r.inside = 0;
+        r.drop = 0; payload_clear();
         return 0;
     case FETCH:
         if (!is_catcher || argc || !r.armed || !body_length || r.pending) return 2;
         emit("D %lu %lu %zu", v[0], r.gen, body_length);
         for (size_t i = 0; i < body_length; i++) emit(" %u", body[i]);
         emit("\n"); return 0;
+    case FETCH_STREAM:
+        if (!is_catcher || argc) return 2;
+        return stream_fetch(v[0]);
+    case LOAD_STREAM:
+        if (!is_source || argc != 3) return 2;
+        return stream_load(v[0], a[0], a[1], a[2]);
+    case FILE_READ:
+        if (!is_source || r.begin || !argc) return 2;
+        for (size_t i = 0; i < argc; i++) if (!a[i] || a[i] > 255) return 2;
+        return file_read(v[0], a, argc);
+    case FILE_STAGE:
+        if (!is_proxy || r.begin || !argc) return 2;
+        for (size_t i = 0; i < argc; i++) if (!a[i] || a[i] > 255) return 2;
+        return file_stage(v[0], a, argc);
+    case FILE_VERIFY:
+        if (is_source || !argc) return 2;
+        for (size_t i = 0; i < argc; i++) if (!a[i] || a[i] > 255) return 2;
+        return file_verify(v[0], a, argc);
     case ORPHAN_UP:
         if (is_source || argc || !expected_source || XGetSelectionOwner(inject, selection_atom) != None)
             return 2;
@@ -231,7 +267,9 @@ static unsigned long dispatch(unsigned long *v, size_t n) {
 }
 
 static void command(char *line) {
-    unsigned long values[PAYLOAD_MAX + 4];
+    /* Control lines are LINE_MAXIMUM bytes of ' '-separated decimal tokens, so
+     * at most ~1024 tokens; payload itself travels via LOAD/LOAD_STREAM. */
+    unsigned long values[LINE_MAXIMUM / 2 + 4];
     size_t n = 0;
     char *p = line;
     while (*p) {
@@ -245,7 +283,8 @@ static void command(char *line) {
         require(!*end || *p, "no trailing control whitespace");
     }
     require(n >= 3 && values[0] && values[2], "sequence/opcode/generation required");
-    report(values[0], dispatch(values, n));
+    unsigned long status = dispatch(values, n);
+    if (status != STREAM_DEFERRED) report(values[0], status);
 }
 
 static gboolean input_ready(gint fd, GIOCondition condition, gpointer data) {
@@ -273,7 +312,7 @@ static gboolean input_ready(gint fd, GIOCondition condition, gpointer data) {
 static gboolean tick(gpointer data) {
     (void)data;
     static bool ready;
-    native_poll(); flush_output(); geometry();
+    native_poll(); incr_poll(); flush_output(); geometry();
     if (!ready && r.xid) { ready = true; report(0, 0); }
     return G_SOURCE_CONTINUE;
 }
@@ -306,7 +345,7 @@ int main(int argc, char **argv) {
     gtk_container_add(GTK_CONTAINER(box), gtk_label_new(argv[1]));
     if (is_source) {
         gtk_widget_add_events(box, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
-        gtk_drag_source_set(box, GDK_BUTTON1_MASK, targets, 1, GDK_ACTION_COPY);
+        gtk_drag_source_set(box, GDK_BUTTON1_MASK, targets, G_N_ELEMENTS(targets), GDK_ACTION_COPY);
         g_signal_connect(box, "button-press-event", G_CALLBACK(pressed), NULL);
         g_signal_connect(box, "drag-begin", G_CALLBACK(begun), NULL);
         g_signal_connect(box, "drag-end", G_CALLBACK(ended), NULL);
@@ -314,13 +353,15 @@ int main(int argc, char **argv) {
         g_signal_connect(box, "drag-data-get", G_CALLBACK(selection_get), NULL);
         g_signal_connect(box, "drag-data-delete", G_CALLBACK(deleted), NULL);
     } else if (!is_sentinel) {
-        gtk_drag_dest_set(box, 0, targets, 1, GDK_ACTION_COPY);
+        gtk_drag_dest_set(box, 0, targets, G_N_ELEMENTS(targets), GDK_ACTION_COPY);
         g_signal_connect(box, "drag-motion", G_CALLBACK(dragged), NULL);
         g_signal_connect(box, "drag-leave", G_CALLBACK(left), NULL);
         g_signal_connect(box, "drag-drop", G_CALLBACK(dropped), NULL);
         g_signal_connect(box, "drag-data-received", G_CALLBACK(selection_received), NULL);
     }
     gtk_widget_show_all(window);
+    incr_init(); stream_init(); file_init();
+    payload_report();    /* digest fields describe the real (possibly empty) body */
     g_unix_fd_add(STDIN_FILENO, G_IO_IN | G_IO_HUP | G_IO_ERR, input_ready, NULL);
     g_timeout_add(10, tick, NULL);
     gtk_main();

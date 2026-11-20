@@ -31,7 +31,10 @@ unsigned long qtDispatch(const unsigned long *v, size_t count) {
     size_t argc = count - 3;
     if (op == ARM && !is_source && argc == 1 && a[0] && gen >= r.gen) {
         r.gen = gen; role->expected = a[0]; r.armed = 1; r.epoch++;
-        r.inside = 0; role->clearPayload(); return 0;
+        r.inside = 0; r.drop = 0; role->clearPayload(); return 0;
+    }
+    if (op == GENERATION && is_source && argc == 0 && gen > r.gen && !r.down) {
+        r.gen = gen; return 0;
     }
     if (gen != r.gen) return 1;
     switch (op) {
@@ -71,7 +74,7 @@ unsigned long qtDispatch(const unsigned long *v, size_t count) {
     }
     case DISARM:
         if (is_source || argc) return 2;
-        r.armed = 0; r.epoch++; r.inside = 0; role->clearPayload(); return 0;
+        r.armed = 0; r.epoch++; r.inside = 0; r.drop = 0; role->clearPayload(); return 0;
     case QUIT:
         if (argc) return 2;
         role->stop(); return 0;
@@ -80,7 +83,9 @@ unsigned long qtDispatch(const unsigned long *v, size_t count) {
 }
 
 static void command(const QByteArray &line) {
-    unsigned long values[PAYLOAD_MAX + 4];
+    /* Control lines are LINE_MAXIMUM bytes of ' '-separated decimal tokens, so
+     * at most ~1024 tokens; payload itself travels via LOAD (small inline). */
+    unsigned long values[LINE_MAXIMUM / 2 + 4];
     size_t count = 0;
     for (const QByteArray &token : line.split(' ')) {
         require(count < sizeof(values) / sizeof(values[0]) && !token.isEmpty() && token.size() <= 10,

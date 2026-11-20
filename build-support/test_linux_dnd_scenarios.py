@@ -142,12 +142,26 @@ class FramingTests(unittest.TestCase):
         self.assertEqual(re.findall(r'X\((\w+)\)', field_block), protocol.FIELDS)
         commands = header.split('enum Command {', 1)[1].split('};', 1)[0]
         names = re.findall(r'\b[A-Z_]+\b', commands)
-        self.assertEqual([getattr(protocol, name) for name in names], list(range(18)))
+        self.assertEqual([getattr(protocol, name) for name in names], list(range(len(names))))
 
     def test_new_source_files_stay_within_500_lines(self):
         names = ('linux_dnd_roles.c', 'linux_dnd_roles.h', 'linux_dnd_native.c',
-                 'linux_dnd_selection.c', 'linux_dnd_protocol.py',
-                 'linux_dnd_scenarios.py', 'test_linux_dnd_scenarios.py')
+                 'linux_dnd_selection.c', 'linux_dnd_incr.c', 'linux_dnd_incr.h',
+                 'linux_dnd_stream.c', 'linux_dnd_stream.h', 'linux_dnd_protocol.py',
+                 'linux_dnd_scenarios.py', 'linux_dnd_incr_scenarios.py',
+                 'linux_dnd_file.c', 'linux_dnd_file.h', 'linux_dnd_file_scenarios.py',
+                 'linux_dnd_app_file_scenarios.py', 'linux_dnd_recovery.py',
+                 'test_linux_dnd_scenarios.py', 'test_linux_dnd_recovery.py',
+                 'linux_input_toolkit_route.c', 'linux_input_toolkit_qt.cpp',
+                 'linux_input_toolkit_qt_row.py', 'linux_input_toolkit_scenarios.py',
+                 'linux_input_toolkit_qt_build.py', 'test_linux_input_toolkit.py',
+                 'linux_hardware_acceptance.py', 'test_linux_hardware_acceptance.py',
+                 'linux_app_harness.py', 'linux_app_page.py', 'linux_app_x11.py',
+                 'linux_dnd_app_scenarios.py', 'linux_dnd_app_page.html',
+                 'linux_deps_archive.py', 'linux_deps_fetch.py',
+                 'linux_input_app_page.html', 'test_linux_app_wave.py',
+                 'test_linux_deps_archive.py', 'test_linux_deps_fetch.py',
+                 'test_linux_input_probe.py')
         for name in names:
             lines = Path(__file__).with_name(name).read_text().splitlines()
             with self.subTest(name=name):
@@ -222,7 +236,8 @@ class TransportTests(unittest.TestCase):
                 mock.patch.object(protocol.subprocess, 'Popen', side_effect=spawn):
             role = protocol.Role('/not-a-native-binary', name, {})
         self.addCleanup(role.close)
-        self.assertEqual(captured, [{'PATH': '/usr/bin:/bin'}])
+        self.assertEqual([{k: v for k, v in env.items() if k != 'OINK_STREAM_FD'}
+                          for env in captured], [{'PATH': '/usr/bin:/bin'}])
         return role
 
     def test_partial_line_cannot_block_past_deadline(self):

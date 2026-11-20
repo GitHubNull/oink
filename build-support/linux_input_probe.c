@@ -122,6 +122,78 @@ static int find_device(Display *display, const char *name) {
     return found;
 }
 
+static Window prepare_target(Display *target, Window root) {
+    /* Metacity may reclaim focus from an unmanaged window after initial input. */
+    Window window = XCreateSimpleWindow(target, root, 100, 100, 400, 300, 0, 0, 0);
+    XSelectInput(target, window, KeyPressMask | KeyReleaseMask | ButtonPressMask
+                 | ButtonReleaseMask | StructureNotifyMask);
+    XMapWindow(target, window);
+    XFlush(target);
+    long deadline = milliseconds() + 2000;
+    for (;;) {
+        XWindowAttributes attributes;
+        require(XGetWindowAttributes(target, window, &attributes), "query managed target mapping");
+        if (attributes.map_state == IsViewable) return window;
+        int remaining = (int)(deadline - milliseconds());
+        require(remaining > 0, "managed target mapping deadline");
+        if (XPending(target)) {
+            XEvent event;
+            XNextEvent(target, &event);
+            continue;
+        }
+        struct pollfd fd = {ConnectionNumber(target), POLLIN, 0};
+        require(poll(&fd, 1, remaining) >= 0, "managed target mapping poll");
+    }
+}
+
+static void require_focus_ready(Display *inject, Window window) {
+    /* Metacity applies its own focus shortly after mapping; wait until that
+       settles, then take explicit focus and require the server to confirm it. */
+    Window previous = None;
+    long settled_at = -1;
+    long deadline = milliseconds() + 2000;
+    for (;;) {
+        Window current;
+        int revert;
+        require(XGetInputFocus(inject, &current, &revert), "query window manager focus");
+        if (current != None && current == previous) {
+            if (settled_at < 0)
+                settled_at = milliseconds();
+            if (milliseconds() - settled_at >= 20)
+                break;
+        } else {
+            settled_at = -1;
+        }
+        previous = current;
+        require(milliseconds() < deadline, "window manager focus settling deadline");
+        if (XPending(inject)) {
+            XEvent event;
+            XNextEvent(inject, &event);
+            continue;
+        }
+        struct pollfd fd = {ConnectionNumber(inject), POLLIN, 0};
+        require(poll(&fd, 1, 20) >= 0, "window manager focus settling poll");
+    }
+    XSetInputFocus(inject, window, RevertToParent, CurrentTime);
+    XFlush(inject);
+    long focus_deadline = milliseconds() + 2000;
+    for (;;) {
+        Window focus;
+        int revert;
+        require(XGetInputFocus(inject, &focus, &revert), "confirm managed focus");
+        if (focus == window)
+            return;
+        require(milliseconds() < focus_deadline, "managed focus readiness deadline");
+        if (XPending(inject)) {
+            XEvent event;
+            XNextEvent(inject, &event);
+            continue;
+        }
+        struct pollfd fd = {ConnectionNumber(inject), POLLIN, 0};
+        require(poll(&fd, 1, 20) >= 0, "managed focus readiness poll");
+    }
+}
+
 int main(void) {
     require_isolated();
     XSetErrorHandler(record_error);
@@ -134,13 +206,8 @@ int main(void) {
     int major = 2, minor = 2;
     require(XIQueryVersion(capture, &major, &minor) == Success, "XI2 version");
     Window root = DefaultRootWindow(capture);
-    XSetWindowAttributes attributes = {.override_redirect = True};
-    Window window = XCreateWindow(target, root, 100, 100, 400, 300, 0, CopyFromParent,
-                                  InputOutput, CopyFromParent, CWOverrideRedirect, &attributes);
-    XSelectInput(target, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask);
-    XMapWindow(target, window);
-    XSync(target, False);
-    XSetInputFocus(inject, window, RevertToParent, CurrentTime);
+    Window window = prepare_target(target, root);
+    require_focus_ready(inject, window);
     XTestFakeMotionEvent(inject, DefaultScreen(inject), 200, 200, CurrentTime);
     XSync(inject, False);
     int pointer;

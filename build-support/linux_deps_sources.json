@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "platform": "linux-x86_64",
+  "qt_version": "6.12.0",
+  "xres_version": "2:1.2.1-1build1",
+  "provenance": {
+    "qt_metadata": "https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_6120/qt6_6120/Updates.xml",
+    "qt_metadata_sha256": "615f617ad82e9c9b50e339ce19eb340901919ea29386a93843be236cb77ca5a7",
+    "qt_archive_hashes": "Official HTTPS archive .mirrorlist SHA-256 and size",
+    "ubuntu_index": "noble/main/binary-amd64/Packages",
+    "ubuntu_signing_fingerprint": "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+  },
+  "archives": [
+    {
+      "id": "qtbase",
+      "component": "qt",
+      "format": "7z",
+      "subdir": ".",
+      "url": "https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_6120/qt6_6120/qt.qt6.6120.linux_gcc_64/6.12.0-0-202609280346qtbase-Linux-RHEL_9_6-GCC-Linux-RHEL_9_6-X86_64.7z",
+      "size": 23729678,
+      "sha256": "943023b929d0c08eafe7341700b5ed7601284410b7afd6093f950be291d1d7cd"
+    },
+    {
+      "id": "icu",
+      "component": "qt",
+      "format": "7z",
+      "subdir": "lib",
+      "url": "https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/qt6_6120/qt6_6120/qt.qt6.6120.linux_gcc_64/6.12.0-0-202609280346icu-linux-Rhel8.6-x86_64.7z",
+      "size": 9660660,
+      "sha256": "1fdbcd67b1760f3a3f031c64637a9f19992aed2f35aa615e12a468f8c655d4da"
+    },
+    {
+      "id": "libxres-dev",
+      "component": "sysroot",
+      "format": "deb",
+      "subdir": ".",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxres/libxres-dev_1.2.1-1build1_amd64.deb",
+      "size": 8492,
+      "sha256": "7e7346f017ad871cd2e3a0e9c8742e943e09198867f042cc455465c39240e2ce"
+    },
+    {
+      "id": "libxres1",
+      "component": "sysroot",
+      "format": "deb",
+      "subdir": ".",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxres/libxres1_1.2.1-1build1_amd64.deb",
+      "size": 6778,
+      "sha256": "e47d216187d3ef658ff087e3ecada2cf46b199ad28106e55ff00412cd6c55dbd"
+    }
+  ]
+}
