@@ -61,6 +61,18 @@ pub fn events(data_dir: &Path, out: &mut dyn std::io::Write) -> anyhow::Result<(
     }
 }
 
+/// Entry process to restart for this platform: the Windows tray-and-UI process,
+/// the Linux UI (which starts its backend), or the macOS backend bundle executable.
+fn entry_name() -> &'static str {
+    if cfg!(windows) {
+        "oink.exe"
+    } else if cfg!(target_os = "linux") {
+        "oink"
+    } else {
+        super::MAC_BACKEND_EXECUTABLE
+    }
+}
+
 /// `oink-agent reopen`: does not use `AgentApi::reopen_oink`. Ask the backend to stop,
 /// wait for it to exit, then start the entry process (macOS: the backend; Windows: the
 /// tray-and-UI process without the autostart flag, which starts the backend). Works on
@@ -68,11 +80,7 @@ pub fn events(data_dir: &Path, out: &mut dyn std::io::Write) -> anyhow::Result<(
 pub fn reopen(data_dir: &Path) -> anyhow::Result<()> {
     let executable = std::env::current_exe()?;
     let parent = executable.parent().ok_or_else(|| anyhow::anyhow!("找不到应用目录"))?;
-    let entry = parent.join(if cfg!(windows) {
-        "oink.exe"
-    } else {
-        super::MAC_BACKEND_EXECUTABLE
-    });
+    let entry = parent.join(entry_name());
     anyhow::ensure!(entry.is_file(), "找不到应用入口：{}", entry.display());
     anyhow::ensure!(
         crate::host::stop_service(data_dir, Duration::from_secs(10))?,

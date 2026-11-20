@@ -9,6 +9,8 @@
 pub mod cli;
 pub mod foreground;
 pub mod launch;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(windows)]
 mod main_windows;
 
@@ -196,7 +198,16 @@ pub fn run(launch: Launch) -> u8 {
     {
         macos::run(launch, false)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let _ = launch;
+        crate::host::run_service()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::run(launch)
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         let _ = launch;
         crate::host::run_service()
@@ -361,7 +372,9 @@ pub(crate) fn on_main(work: impl FnOnce() + Send + 'static) {
     macos::on_main(work);
     #[cfg(windows)]
     main_windows::on_main(work);
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    linux::on_main(work);
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     work();
 }
 
@@ -372,7 +385,11 @@ pub(crate) fn run_main<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'sta
     {
         main_windows::run_main(work)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::run_main(work)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         oink_input::run_with_main_run_loop(work)
     }

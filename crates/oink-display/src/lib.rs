@@ -14,6 +14,8 @@ pub use oink_foundation::display::DisplayInfo;
 pub mod arrangement;
 
 pub mod layout;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod projection;
@@ -103,6 +105,8 @@ pub trait DisplayBackend: Send + Sync {
 
 /// 创建本机平台的实现。
 pub fn platform_backend() -> Result<Box<dyn DisplayBackend>, DisplayError> {
+    #[cfg(target_os = "linux")]
+    return linux::backend();
     #[cfg(target_os = "macos")]
     return macos::backend();
     #[cfg(windows)]
