@@ -3301,6 +3301,9 @@ name = "oink-display"
 version = "0.3.5"
 dependencies = [
  "block2",
+ "gdk-pixbuf",
+ "gio",
+ "glib",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -3360,6 +3363,8 @@ dependencies = [
 name = "oink-locator"
 version = "0.3.5"
 dependencies = [
+ "cairo-rs",
+ "glib",
  "libc",
  "objc2",
  "objc2-app-kit",
@@ -3370,9 +3375,11 @@ dependencies = [
  "oink-display",
  "oink-foundation",
  "oink-routing",
+ "pango",
  "tracing",
  "tracing-subscriber",
  "windows",
+ "x11-dl",
 ]
 
 [[package]]

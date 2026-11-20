@@ -165,6 +165,8 @@ class FramingTests(unittest.TestCase):
                  'test_linux_input_probe.py',
                  'linux_phase3_shell_probe.py', 'linux_phase3_w2_probe.py',
                  'linux_phase3_w3_probe.py', 'linux_phase3_tray_probe.py',
+                 'linux_phase4_input_probe.c', 'linux_phase4_overlay_probe.c',
+                 'linux_phase4_wallpaper_probe.py',
                  'linux_sni_watcher.py')
         for name in names:
             lines = Path(__file__).with_name(name).read_text().splitlines()

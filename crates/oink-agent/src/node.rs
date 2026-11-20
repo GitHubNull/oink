@@ -127,11 +127,12 @@ impl NodeOptions {
             displays,
             display_backend: Some(Arc::from(display)),
             clipboard,
-            // macOS、Windows backend 都把系统的自动重复作为再一次按下上报（重复只在源机产生），
-            // 都支持在截获回调里切换模式。Linux 阶段 3 只有路由 owner 的生命周期，两者都还没有真实实现。
+            // 三个 backend 都把系统的自动重复作为再一次按下上报（重复只在源机产生）。
+            // Linux 阶段 4 使用 XkbSetDetectableAutoRepeat；回调内切模式仍只在
+            // 已有实现的平台启用。
             mode_switch_in_callback: !cfg!(target_os = "linux"),
-            capture_reports_key_repeat: !cfg!(target_os = "linux"),
-            cursor_trail: !cfg!(target_os = "linux"),
+            capture_reports_key_repeat: true,
+            cursor_trail: true,
         })
     }
 }

@@ -28,6 +28,14 @@ mod windows;
 #[cfg(windows)]
 use windows as platform;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as platform;
+
+#[cfg(target_os = "linux")]
+mod x11;
+
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -582,41 +590,9 @@ fn over_pixel(dst: u32, src: u32) -> u32 {
     out
 }
 
-/// 每帧最长间隔：平台不知道刷新率时按 60 Hz。仅 macOS/Windows 渲染器使用。
-#[cfg(any(target_os = "macos", windows))]
+/// 每帧最长间隔：平台不知道刷新率时按 60 Hz。macOS/Windows/Linux 渲染器共用。
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub(crate) const DEFAULT_FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
-
-#[cfg(not(any(target_os = "macos", windows)))]
-mod platform {
-    use super::*;
-
-    pub(crate) fn available() -> bool {
-        false
-    }
-
-    /// Mirrors the platform renderers' layer shape; the Linux stub never reads it.
-    #[allow(dead_code)]
-    pub(crate) struct Layer {
-        pub surface: usize,
-        pub rect: CellRect,
-        pub pixels: Vec<u32>,
-    }
-
-    pub(crate) struct Backend;
-
-    impl Backend {
-        pub(crate) fn new(_health: std::sync::Arc<crate::diagnostics::Health>) -> Option<Self> {
-            None
-        }
-        pub(crate) fn set_displays(&mut self, _: &[DisplayInfo]) {}
-        pub(crate) fn regions(&self, _: CellRect, _: f64) -> Vec<(usize, CellRect)> {
-            Vec::new()
-        }
-        pub(crate) fn present(&mut self, _: f64, _: Vec<Layer>) {}
-        pub(crate) fn hide(&mut self) {}
-        pub(crate) fn wait_frame(&mut self, _: Instant) {}
-    }
-}
 
 #[cfg(test)]
 mod tests {

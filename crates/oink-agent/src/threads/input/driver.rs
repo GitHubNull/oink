@@ -58,6 +58,8 @@ pub(super) struct Driver {
     backlog_sequence: u64,
     backlog_check: Instant,
     resume_hotkey: Option<oink_input::capture_loop::ResumeHotkey>,
+    #[cfg(target_os = "linux")]
+    hotkeys: Vec<oink_input::capture_loop::KeyChord>,
     input_safety: oink_input::session_gate::InputSafety,
     owner_acks: Vec<PendingOwnerApply>,
     capture_fault: Option<oink_protocol::v1::dto::ResourceFaultCode>,
@@ -234,6 +236,8 @@ impl Driver {
             backlog_sequence: 0,
             backlog_check: now,
             resume_hotkey: None,
+            #[cfg(target_os = "linux")]
+            hotkeys: Vec::new(),
             input_safety: Default::default(),
             owner_acks: Vec::new(),
             capture_fault: None,
@@ -1094,6 +1098,24 @@ impl Driver {
                             meta: chord.mods.contains(Mods::META),
                         }
                     });
+                #[cfg(target_os = "linux")]
+                {
+                    self.hotkeys = hotkeys
+                        .iter()
+                        .filter(|binding| binding.chord.key.page() != 9)
+                        .map(|binding| {
+                            use oink_routing::Mods;
+                            let chord = binding.chord;
+                            oink_input::capture_loop::KeyChord {
+                                key: chord.key,
+                                control: chord.mods.contains(Mods::CTRL),
+                                alt: chord.mods.contains(Mods::ALT),
+                                shift: chord.mods.contains(Mods::SHIFT),
+                                meta: chord.mods.contains(Mods::META),
+                            }
+                        })
+                        .collect();
+                }
                 self.adapter.router_mut().set_hotkeys(hotkeys);
             }
             InputCommand::EventFrequency(frequency) => {
@@ -2584,6 +2606,10 @@ impl CaptureLoop for Driver {
 
     fn paused_hotkey(&self) -> Option<oink_input::capture_loop::ResumeHotkey> {
         self.resume_hotkey.filter(|_| self.paused && !self.stopping)
+    }
+    #[cfg(target_os = "linux")]
+    fn hotkeys(&self) -> Vec<oink_input::capture_loop::KeyChord> {
+        self.hotkeys.clone()
     }
     fn resume_hotkey(&mut self) {
         if self.paused && !self.stopping {

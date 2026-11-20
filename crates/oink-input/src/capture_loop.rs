@@ -16,6 +16,17 @@ pub struct ResumeHotkey {
     pub meta: bool,
 }
 
+/// A chord the owner wants observed locally; Linux registers passive grabs for
+/// these without knowing which router action they trigger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyChord {
+    pub key: crate::KeyCode,
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub meta: bool,
+}
+
 pub trait CaptureLoop: Send {
     /// Called on the capture thread before startup is reported complete.
     fn set_wake(&mut self, wake: Wake);
@@ -88,6 +99,10 @@ pub trait CaptureLoop: Send {
     fn paused_hotkey(&self) -> Option<ResumeHotkey> {
         None
     }
+    /// Non-mouse chords to register while local input is observed.
+    fn hotkeys(&self) -> Vec<KeyChord> {
+        Vec::new()
+    }
     fn resume_hotkey(&mut self) {}
 }
 
@@ -116,7 +131,8 @@ pub(crate) fn clear() {
     OWNER.with(|slot| slot.borrow_mut().take());
 }
 // Native hooks are the only producers; module tests exercise the reentrancy path.
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn event(event: &CapturedEvent) -> Disposition {
     OWNER.with(|slot| {
         // Windows: SendInput issued from this hook thread while event()/poll()
@@ -135,7 +151,8 @@ pub(crate) fn event(event: &CapturedEvent) -> Disposition {
         owner.as_mut().expect("capture owner installed").event(event)
     })
 }
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 static REENTERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
     OWNER.with(|slot| {
@@ -145,7 +162,8 @@ pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
     })
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn capture_requested() -> bool {
     OWNER.with(|slot| {
         slot.borrow()
@@ -155,11 +173,24 @@ pub(crate) fn capture_requested() -> bool {
     })
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn paused_hotkey() -> Option<ResumeHotkey> {
     OWNER.with(|slot| slot.borrow().as_ref().and_then(|owner| owner.paused_hotkey()))
 }
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "linux")]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn hotkeys() -> Vec<KeyChord> {
+    // A native callback nested in the busy owner must not borrow it again.
+    OWNER.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|owner| owner.as_ref().map(|o| o.hotkeys()))
+            .unwrap_or_default()
+    })
+}
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn resume_hotkey() {
     OWNER.with(|slot| {
         if let Some(owner) = slot.borrow_mut().as_mut() {
@@ -233,7 +264,8 @@ pub(crate) fn keyboard_guard_suspended() -> bool {
     })
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn keyboard_key_blocked(code: Option<crate::KeyCode>) -> bool {
     OWNER.with(|slot| {
         slot.borrow()
