@@ -16,6 +16,9 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+/// The current native clipboard slot is owned by the macOS and Windows backends;
+/// Linux has no clipboard backend yet (phase 5). Tests exercise the shared logic.
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) mod clipboard;
 mod deferred;
 pub use deferred::Deferred;

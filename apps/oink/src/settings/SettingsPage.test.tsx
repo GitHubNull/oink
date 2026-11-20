@@ -21,7 +21,7 @@ beforeAll(() => {
 afterEach(() => { toast.dismiss(); cleanup(); vi.restoreAllMocks(); agent.adopt('overview', null); agent.adopt('receivedFiles',null); });
 const prefs = { prefs: DEFAULT_PREFS, set() {}, canEdit: () => true } as unknown as PrefsApi;
 const perms: Record<PermissionId, PermState> = { accessibility: 'granted', input: 'granted', network: 'not_required', files: 'granted', audio: 'granted' };
-const view = (platform: 'mac' | 'win' = 'mac') => <OinkProvider defaultMotion="reduced"><SettingsPage open platform={platform} api={prefs} capsIme={false} query="" jump={null} onActive={() => {}} version="test" upgrade={{available:false,next:''}} perms={perms} onGrant={() => {}} onLog={() => {}} onAbout={() => {}} onBlocklist={() => {}}/><Toaster/></OinkProvider>;
+const view = (platform: 'mac' | 'win' | 'linux' = 'mac') => <OinkProvider defaultMotion="reduced"><SettingsPage open platform={platform} api={prefs} capsIme={false} query="" jump={null} onActive={() => {}} version="test" upgrade={{available:false,next:''}} perms={perms} onGrant={() => {}} onLog={() => {}} onAbout={() => {}} onBlocklist={() => {}}/><Toaster/></OinkProvider>;
 const usage = (total: number) => ({ categories: [], total_bytes: total, incomplete: true });
 
 it.each(['en', 'zh-Hans', 'ja', 'ko'] as const)('shows cached files without an incomplete note or an open-folder button in %s', async language => {
@@ -235,12 +235,23 @@ it('does not render the DS_Store switch on Windows',()=>{
   expect(container.querySelector('[data-item="removeDsStore"]')).toBeNull();
 });
 
+it('hides macOS-only and Linux-unimplemented rows and describes the Linux shell',()=>{
+  setLanguage('zh-Hans');
+  const {container}=render(view('linux'));
+  expect(container.querySelector('[data-section="permissions"]')).toBeNull();
+  expect(container.querySelector('[data-item="removeDsStore"]')).toBeNull();
+  expect(container.querySelector('[data-item="virtualMicrophone"]')).toBeNull();
+  expect(container.querySelector('[data-item="showInMenuBar"]')?.textContent).toContain('系统托盘的图标');
+  expect(container.querySelector('[data-item="pasteAsFile"]')?.textContent).toContain('文件管理器');
+  expect(sectionsFor('win').find(section=>section.id==='audio')!.items.some(item=>item.id==='virtualMicrophone')).toBe(true);
+});
+
 it.each([['zh-Hans','释放磁盘空间。仍在原设备上的文件可以再次下载，其他文件会被删除'],['en','Frees disk space. Files still on the original device can be downloaded again; others are deleted'],['ja','ディスク容量を空けます。元のデバイスにあるファイルは再ダウンロードでき、それ以外は削除されます'],['ko','디스크 공간을 확보합니다. 원래 기기에 있는 파일은 다시 내려받을 수 있고, 나머지는 삭제됩니다']] as const)('describes received cleanup accurately in %s', (language,copy)=>{
  setLanguage(language);const {container}=render(view());
  expect(container.querySelector('[data-item="receivedCleanup"]')?.textContent).toContain(copy);
 });
 
-it.each(['mac','win'] as const)('places the enabled wheel-lines switch directly below reverse-wheel on %s', platform => {
+it.each(['mac','win','linux'] as const)('places the enabled wheel-lines switch directly below reverse-wheel on %s', platform => {
   setLanguage('zh-Hans');
   const {container}=render(view(platform));
   const input=container.querySelector<HTMLElement>('[data-section="input"]')!;

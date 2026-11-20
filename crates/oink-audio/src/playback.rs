@@ -196,8 +196,11 @@ pub(crate) struct OutputGap {
 }
 
 pub(crate) trait NativeRender: Send {
+    /// macOS/Windows output callbacks pull audio; Linux has no playback sink yet.
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     fn fill(&mut self, output: &mut [f32], timing: NativeOutputTiming);
     /// Entire adapter work, including native format copy/release.
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     fn complete(&mut self, elapsed: Duration);
 }
 
@@ -261,6 +264,7 @@ impl CallbackIncident {
             value
         })
     }
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     fn exceptional(&self) -> bool {
         (self.budget_ns != 0 && self.elapsed_ns > self.budget_ns)
             || self.native_gap_frames.is_some_and(|gap| gap != 0)
@@ -619,12 +623,14 @@ pub(crate) struct Render {
     started: Instant,
     callback_ms: Arc<AtomicU64>,
     traces: Option<handoff::Producer<PlaybackTrace>>,
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     trace_dropped: Arc<AtomicU64>,
     underrun_frames: Arc<AtomicU64>,
     pending_trace: Option<PlaybackTrace>,
     pending_period_ns: u64,
     pending_at_ms: u64,
     pending_native_gap: Option<u64>,
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     incidents: handoff::Producer<CallbackIncident>,
     pending_incident: CallbackIncident,
     callback_sequence: u64,

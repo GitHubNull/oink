@@ -97,7 +97,8 @@ export function UpgradeDialog({container}:{container:HTMLElement|null}) {
   const [restoredFailure,setRestoredFailure]=useState(false);
   const [localFile,setLocalFile]=useState(false);
   const dragging=usePackageDrag();
-  usePackageDropReceiver(boot?.platform==='windows'?'win':'mac',path=>{
+  const dropPlatform=boot?.platform==='windows'?'win':boot?.platform==='linux'?'linux':'mac';
+  usePackageDropReceiver(dropPlatform,path=>{
     setLocalFile(true);setRestoredFailure(false);openUpdateDialog();
     void command({type:'open_local',path});
   });

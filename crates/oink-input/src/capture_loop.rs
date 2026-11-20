@@ -115,6 +115,8 @@ pub(crate) fn capture_detached() {
 pub(crate) fn clear() {
     OWNER.with(|slot| slot.borrow_mut().take());
 }
+// Native hooks are the only producers; module tests exercise the reentrancy path.
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) fn event(event: &CapturedEvent) -> Disposition {
     OWNER.with(|slot| {
         // Windows: SendInput issued from this hook thread while event()/poll()
@@ -133,6 +135,7 @@ pub(crate) fn event(event: &CapturedEvent) -> Disposition {
         owner.as_mut().expect("capture owner installed").event(event)
     })
 }
+#[cfg(any(target_os = "macos", windows, test))]
 static REENTERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
     OWNER.with(|slot| {
@@ -142,6 +145,7 @@ pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
     })
 }
 
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn capture_requested() -> bool {
     OWNER.with(|slot| {
         slot.borrow()
@@ -151,9 +155,11 @@ pub(crate) fn capture_requested() -> bool {
     })
 }
 
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn paused_hotkey() -> Option<ResumeHotkey> {
     OWNER.with(|slot| slot.borrow().as_ref().and_then(|owner| owner.paused_hotkey()))
 }
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn resume_hotkey() {
     OWNER.with(|slot| {
         if let Some(owner) = slot.borrow_mut().as_mut() {
@@ -184,11 +190,14 @@ pub(crate) fn injected_disable_release(code: crate::KeyCode, pressed: bool) {
         }
     });
 }
+// The module test drives this through a nested callback; native hooks read it too.
+#[cfg(any(target_os = "macos", windows, test))]
 thread_local! { static MOUSE_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 /// The hook reads the guard for every physical mouse event, so the value kept
 /// here is the owner's answer for the previous event on this thread. A
 /// callback nested in the busy owner (see `event`) uses it: the guard is a
 /// user setting, unchanged by the routing work that caused the nesting.
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) fn mouse_disabled() -> bool {
     OWNER.with(|slot| match slot.try_borrow() {
         Ok(owner) => {
@@ -199,6 +208,7 @@ pub(crate) fn mouse_disabled() -> bool {
         Err(_) => MOUSE_DISABLED.get(),
     })
 }
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn keyboard_disabled() -> bool {
     OWNER.with(|slot| slot.borrow().as_ref().is_some_and(|owner| owner.keyboard_disabled()))
 }
@@ -223,6 +233,7 @@ pub(crate) fn keyboard_guard_suspended() -> bool {
     })
 }
 
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn keyboard_key_blocked(code: Option<crate::KeyCode>) -> bool {
     OWNER.with(|slot| {
         slot.borrow()

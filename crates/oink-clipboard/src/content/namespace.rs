@@ -16,6 +16,8 @@ mod files;
 pub use files::Files;
 #[cfg(target_os = "macos")]
 pub(crate) use files::Flat;
+/// Native file publishers use these names on macOS and Windows only.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) use files::Names;
 
 /// The received copy owned by the OS provider or direct clipboard cache.

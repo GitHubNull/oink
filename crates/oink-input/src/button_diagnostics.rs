@@ -66,10 +66,12 @@ pub fn enabled() -> bool {
 }
 
 pub fn system_state(button: MouseButton) -> SystemState {
-    let mut state = SystemState {
+    let state = SystemState {
         sampled_at_us: crate::native_lifecycle::timestamp(),
         ..Default::default()
     };
+    #[cfg(any(target_os = "macos", windows))]
+    let mut state = state;
     #[cfg(target_os = "macos")]
     {
         use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGMouseButton};
@@ -229,6 +231,9 @@ pub(crate) fn tap_boundary(layer: Layer, available: bool, at_ns: u64) {
     };
     HISTORY.with(|h| h.borrow_mut()[index].boundary(available, at_ns));
 }
+/// Only the macOS taps and the Windows hook emit transitions; Linux has no
+/// button evidence producer yet.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn transition(event: Transition) {
     #[cfg(target_os = "macos")]
     {

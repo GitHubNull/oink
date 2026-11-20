@@ -71,6 +71,8 @@ impl Location {
         Ok(location)
     }
     fn matches(&self, path: &Path, current: &local::Fingerprint) -> io::Result<bool> {
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let _ = path;
         if current.identity[1] != self.fingerprint.identity[1]
             || current.created != self.fingerprint.created
             || current.directory != self.fingerprint.directory

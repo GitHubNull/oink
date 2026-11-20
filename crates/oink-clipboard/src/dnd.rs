@@ -193,6 +193,8 @@ static SOURCE_OBSERVER: std::sync::OnceLock<fn(SourceTiming)> = std::sync::OnceL
 pub fn set_source_observer(observer: fn(SourceTiming)) {
     let _ = SOURCE_OBSERVER.set(observer);
 }
+/// Native source boundaries are reported by the macOS and Windows DnD backends.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn source_timing(timing: SourceTiming) {
     if let Some(observer) = SOURCE_OBSERVER.get() {
         observer(timing);
@@ -238,6 +240,8 @@ impl std::fmt::Debug for SourceHoldInput {
 
 /// Numeric once-per-native-Begin summary, including early failures. No native
 /// window handle, application identity or per-motion record is exported.
+/// Constructed only by the macOS and Windows drag source implementations.
+#[cfg(any(target_os = "macos", windows))]
 #[derive(Default)]
 pub(crate) struct SourceStartTrace {
     pub offset: Option<Point>,
@@ -245,6 +249,7 @@ pub(crate) struct SourceStartTrace {
     pub dropped: u64,
     pub critical_us: u64,
 }
+#[cfg(any(target_os = "macos", windows))]
 impl Drop for SourceStartTrace {
     fn drop(&mut self) {
         let offset = self.offset.unwrap_or_default();

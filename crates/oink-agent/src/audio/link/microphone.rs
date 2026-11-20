@@ -219,7 +219,9 @@ impl Owner {
         &self,
         at_ms: u64,
     ) -> [Option<oink_audio::sink::DropoutBucket>; oink_audio::sink::QUALITY_SECONDS] {
-        let mut output = self.output_quality.snapshot(at_ms);
+        let output = self.output_quality.snapshot(at_ms);
+        #[cfg(any(target_os = "macos", windows))]
+        let mut output = output;
         #[cfg(any(target_os = "macos", windows))]
         if let Some(runtime) = &self.microphone.runtime {
             for bucket in runtime.output_quality(at_ms).into_iter().flatten() {
@@ -234,6 +236,8 @@ impl Owner {
         output
     }
     pub(super) fn microphone_quality(&self, now: Instant) -> Option<crate::audio_quality::Observation> {
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let _ = now;
         #[cfg(any(target_os = "macos", windows))]
         if let Some(runtime) = &self.microphone.runtime {
             return runtime.quality(now);
@@ -248,11 +252,8 @@ impl Owner {
         None
     }
     pub(super) fn tick_microphone(&mut self) {
-        if self.driver_change_active() {
-            return;
-        }
         #[cfg(any(target_os = "macos", windows))]
-        if self.microphone.native {
+        if !self.driver_change_active() && self.microphone.native {
             let mut runtime = self.microphone.runtime.take().unwrap_or_default();
             runtime.tick(self);
             self.microphone.runtime = Some(runtime);
@@ -273,11 +274,10 @@ impl Owner {
         }
     }
     pub(super) fn microphone_message(&mut self, peer: DeviceId, message: &Message) {
-        if self.driver_change_active() {
-            return;
-        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let _ = (peer, message);
         #[cfg(any(target_os = "macos", windows))]
-        if self.microphone.native {
+        if !self.driver_change_active() && self.microphone.native {
             let mut runtime = self.microphone.runtime.take().unwrap_or_default();
             runtime.message(self, peer, message);
             self.microphone.runtime = Some(runtime);

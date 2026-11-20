@@ -49,6 +49,10 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder", "NSWindow", "NSButton", "NSControl", "NSPanel", "NSView", "NSEvent", "NSGraphics", "NSScreen", "NSColor", "NSImage", "NSAppearance", "NSHapticFeedback"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The tray is registered only when a StatusNotifierWatcher owns this name.
+gio = "0.18"
+
 [dev-dependencies]
 tempfile = "3"
 # IPC 生命周期测试：假的输入，不操作桌面。

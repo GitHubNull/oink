@@ -5,14 +5,14 @@ import { OinkProvider } from 'oink-ui';
 import { UpgradeButton, UpgradeDialog, closeUpdateDialog, openUpdateDialog, releaseNotesForLanguage } from './Upgrade';
 import type { UpdatePhase, UpdateStatus } from '../api/update';
 import { setLanguage } from '../i18n';
-const mock=vi.hoisted(()=>({update:vi.fn(),query:vi.fn(),fail:vi.fn(),openUrl:vi.fn(),receive:null as null|((path:string)=>void),status:null as UpdateStatus|null,boot:null as {open_update_failure?:boolean;platform?:string}|null}));
-vi.mock('./PackageDrop',async()=>({...await vi.importActual<typeof import('./PackageDrop')>('./PackageDrop'),usePackageDropReceiver:(_platform:string,receive:(path:string)=>void)=>{mock.receive=receive;}}));
+const mock=vi.hoisted(()=>({update:vi.fn(),query:vi.fn(),fail:vi.fn(),openUrl:vi.fn(),receive:null as null|((path:string)=>void),platforms:[] as string[],status:null as UpdateStatus|null,boot:null as {open_update_failure?:boolean;platform?:string}|null}));
+vi.mock('./PackageDrop',async()=>({...await vi.importActual<typeof import('./PackageDrop')>('./PackageDrop'),usePackageDropReceiver:(platform:string,receive:(path:string)=>void)=>{mock.platforms.push(platform);mock.receive=receive;}}));
 vi.mock('../api/client',()=>({api:{update:mock.update},shell:{openUrl:mock.openUrl}}));
 vi.mock('../api/store',()=>({agent:{query:mock.query,fail:mock.fail},useAgent:()=>({update:mock.status,boot:mock.boot})}));
 const candidate={build:31,version:'0.1.1',size:1,published_at:null,severity:'normal',notes:{en:'Fixes','zh-Hans':'修复'}};
 const base:UpdateStatus={current_build:30,version:'0.1.0',checks_enabled:true,phase:'ready',candidate,checked_at:null,next_check:null,deferred_until:null,blockers:[],progress:100,error:null,scope:'user',can_change_policy:true};
 beforeEach(()=>{
-  setLanguage('en');vi.clearAllMocks();
+  setLanguage('en');vi.clearAllMocks();mock.platforms.length=0;
   mock.boot=null;
   Object.defineProperty(window,'matchMedia',{configurable:true,value:()=>({matches:true,addEventListener(){},removeEventListener(){}})});
   vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
@@ -28,6 +28,16 @@ const label=(el:Element)=>{const copy=el.cloneNode(true) as Element;copy.querySe
 const buttons=()=>within(screen.getByRole('dialog')).getAllByRole('button').map(label);
 const fill=(el:Element)=>(el.querySelector('.upgrade-progress') as HTMLElement|null)?.style.getPropertyValue('--upgrade-progress');
 
+it.each([
+  ['macos','mac'],
+  ['windows','win'],
+  ['linux','linux'],
+  [undefined,'mac'],
+] as const)('filters dropped installers for %s as %s',(platform,expected)=>{
+  mock.boot=platform?{platform}:null;
+  mainWindow();
+  expect(mock.platforms).toEqual([expected]);
+});
 it('stays closed until a trigger opens it in the main window',()=>{
   mainWindow();
   expect(dialog()).toBeNull();

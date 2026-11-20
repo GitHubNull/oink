@@ -248,6 +248,8 @@ pub fn emit_gesture(stamp: Option<(u64, i64, i64)>, gesture: crate::gesture_trac
     notify();
 }
 /// Raw button observations use the same bounded recorder queue, never a key payload.
+/// Native button evidence exists only on macOS and Windows.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn emit_button(button: crate::button_diagnostics::Transition) {
     let Some(buffer) = BUFFER.get() else { return };
     let record = Record {

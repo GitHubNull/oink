@@ -10,6 +10,9 @@ const subscribe=(listener:()=>void)=>{listeners.add(listener);return()=>{listene
 export function setPackageDrag(value:boolean) {if(active===value)return;active=value;listeners.forEach(listener=>listener());}
 export const usePackageDrag=()=>useSyncExternalStore(subscribe,()=>active);
 export function localPackagePath(paths:readonly string[],platform:Platform|'any'='any'):string|null {
+  // Linux packages are handled by the distribution/manual release path, not by
+  // dropping a macOS or Windows installer onto the window.
+  if(platform==='linux')return null;
   const extension=platform==='mac'?/\.dmg$/i:platform==='win'?/\.msi$/i:/\.(dmg|msi)$/i;
   return paths.length===1&&extension.test(paths[0])?paths[0]:null;
 }

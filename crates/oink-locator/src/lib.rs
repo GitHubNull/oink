@@ -29,7 +29,7 @@ mod windows;
 use windows as platform;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use oink_foundation::Point;
 use oink_foundation::display::DisplayInfo;
@@ -582,8 +582,9 @@ fn over_pixel(dst: u32, src: u32) -> u32 {
     out
 }
 
-/// 每帧最长间隔：平台不知道刷新率时按 60 Hz。
-pub(crate) const DEFAULT_FRAME: Duration = Duration::from_micros(16_667);
+/// 每帧最长间隔：平台不知道刷新率时按 60 Hz。仅 macOS/Windows 渲染器使用。
+#[cfg(any(target_os = "macos", windows))]
+pub(crate) const DEFAULT_FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
 
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
@@ -593,6 +594,8 @@ mod platform {
         false
     }
 
+    /// Mirrors the platform renderers' layer shape; the Linux stub never reads it.
+    #[allow(dead_code)]
     pub(crate) struct Layer {
         pub surface: usize,
         pub rect: CellRect,

@@ -11,6 +11,8 @@ export interface ItemMeta {
     desc?: Text;
     keywords?: string;
     only?: Platform;
+    /** Platforms where the backend does not implement this feature yet. */
+    not?: Platform;
     parent?: string;
 }
 export interface SectionMeta {
@@ -55,7 +57,9 @@ export const SECTIONS: SectionMeta[] = [
                 }, get keywords() { return tr('登录 启动项 自启'); } },
             {
                 id: 'showInMenuBar', label: (p) => (p === 'mac' ? tr('在菜单栏展示') : tr('在系统托盘展示')),
-                desc: (p) => (p === 'mac' ? tr('关掉窗口后，也能从菜单栏的图标打开菜单和界面') : tr('关掉窗口后，也能从任务栏右侧的托盘图标打开菜单和界面')),
+                desc: (p) => p === 'mac' ? tr('关掉窗口后，也能从菜单栏的图标打开菜单和界面')
+                    : p === 'linux' ? tr('关掉窗口后，也能从系统托盘的图标打开菜单和界面')
+                        : tr('关掉窗口后，也能从任务栏右侧的托盘图标打开菜单和界面'),
                 get keywords() { return tr('菜单栏 托盘 图标 tray'); },
             },
             { id: 'notificationLevel', get label() { return tr('通知级别'); }, get desc() { return tr('选择本机显示的通知详细程度'); } },
@@ -221,7 +225,7 @@ export const SECTIONS: SectionMeta[] = [
                 }, get desc() {
                     return tr('音频发送到其他设备时，本机扬声器/耳机保持播放');
                 }, get keywords() { return tr('转发 声音 本机'); } },
-            { id: 'virtualMicrophone', get label() { return tr('虚拟麦克风'); }, get keywords() { return tr('麦克风'); } },
+            { id: 'virtualMicrophone', not: 'linux', get label() { return tr('虚拟麦克风'); }, get keywords() { return tr('麦克风'); } },
             { id: 'microphoneInput', get label() { return tr('共享的麦克风'); }, get desc() { return tr('选择本机共享到其他设备的麦克风'); }, get keywords() { return tr('麦克风 输入 录音 来源 系统默认'); } },
         ],
     },
@@ -236,7 +240,9 @@ export const SECTIONS: SectionMeta[] = [
     {
         id: 'tools', get title() { return tr('工具'); }, icon: <Icon name="settings"/>,
         items: [{ id: 'pasteAsFile', get label() { return tr('在右键菜单添加“粘贴为文件”'); },
-            desc: p => p === 'mac' ? tr('复制图片、文本时，可在 Finder 中粘贴为文件') : tr('复制图片、文本时，可在资源管理器中粘贴为文件') }],
+            desc: p => p === 'mac' ? tr('复制图片、文本时，可在 Finder 中粘贴为文件')
+                : p === 'linux' ? tr('复制图片、文本时，可在文件管理器中粘贴为文件')
+                    : tr('复制图片、文本时，可在资源管理器中粘贴为文件') }],
     },
     {
         id: 'permissions',
@@ -316,7 +322,7 @@ export const SECTIONS: SectionMeta[] = [
     },
 ];
 export const sectionsFor = (p: Platform, shortcuts = SHORTCUTS): SectionMeta[] => SECTIONS.filter((s) => !s.only || s.only === p)
-    .map((s) => ({ ...s, items: (s.id === 'shortcuts' ? shortcuts.filter(row=>!row.only || row.only===p).map(row=>({id:`sc-${row.id}`,label:row.label,desc:row.desc,keywords:`${tr('快捷键 热键')} ${row.keywords}`})) : s.items).filter((i: ItemMeta) => !i.only || i.only === p) }));
+    .map((s) => ({ ...s, items: (s.id === 'shortcuts' ? shortcuts.filter(row=>!row.only || row.only===p).map(row=>({id:`sc-${row.id}`,label:row.label,desc:row.desc,keywords:`${tr('快捷键 热键')} ${row.keywords}`})) : s.items).filter((i: ItemMeta) => (!i.only || i.only === p) && i.not !== p) }));
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '');
 export function searchSections(p: Platform, query: string, shortcuts = SHORTCUTS): Map<SectionId, Set<string> | 'all'> {
     const q = norm(query);

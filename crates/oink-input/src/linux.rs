@@ -384,12 +384,12 @@ impl InputBackend for X11Input {
 impl Drop for X11Input {
     fn drop(&mut self) {
         self.stop();
-        if let Ok(conn) = self.conn.get_mut() {
-            if !conn.dpy.is_null() {
-                // SAFETY: 截获线程已 join，连接不再被其他线程使用。
-                unsafe { (self.xlib.XCloseDisplay)(conn.dpy) };
-                conn.dpy = std::ptr::null_mut();
-            }
+        if let Ok(conn) = self.conn.get_mut()
+            && !conn.dpy.is_null()
+        {
+            // SAFETY: 截获线程已 join，连接不再被其他线程使用。
+            unsafe { (self.xlib.XCloseDisplay)(conn.dpy) };
+            conn.dpy = std::ptr::null_mut();
         }
     }
 }

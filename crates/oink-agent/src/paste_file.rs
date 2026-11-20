@@ -1,9 +1,10 @@
 //! Local shell integration; clipboard selection/conversion lives in oink-clipboard.
 use crate::config::{Settings, UiLanguage};
+#[cfg(any(target_os = "macos", windows))]
+use std::process::Command;
 use std::{
     io,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 pub fn language(value: UiLanguage) -> &'static str {
@@ -60,6 +61,7 @@ pub fn title(language: &str) -> &'static str {
         _ => "Paste as File",
     }
 }
+#[cfg(any(target_os = "macos", windows))]
 fn checked(command: &mut Command) -> io::Result<std::process::Output> {
     #[cfg(windows)]
     {
@@ -76,6 +78,9 @@ fn checked(command: &mut Command) -> io::Result<std::process::Output> {
 /// Only a packaged backend registers shell hooks. Developer/isolated CLI runs
 /// may invoke save directly and never replace the installed app's registration.
 pub(crate) fn apply(settings: &Settings) -> io::Result<()> {
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = settings;
+    #[cfg(any(target_os = "macos", windows))]
     let exe = std::env::current_exe()?;
     #[cfg(target_os = "macos")]
     {

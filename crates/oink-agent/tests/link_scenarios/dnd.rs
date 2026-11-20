@@ -419,12 +419,15 @@ fn watchdog_dumps_blocked_dnd_fixture() {
             let drag = Drag::attach(&dev).await;
             // Arm only after startup: this tests failure diagnostics, not a
             // scheduling budget or a reproduction of the original hang.
-            let _scenario = common::watchdog::Scenario::with_limit(
+            let scenario = common::watchdog::Scenario::with_limit_deferred(
                 format!("{}::watchdog fixture", module_path!()),
                 Duration::from_millis(50),
                 "blocked DND fixture",
             );
             drag.register_watchdog(&dev);
+            // Registration is complete before the 50 ms budget starts, so a
+            // heavily loaded machine cannot produce an empty diagnostic dump.
+            scenario.arm();
             let mut waiting =
                 std::pin::pin!(drag.take_resumed_offer("blocked DND fixture: waiting for resumed source offer"));
             let early = std::future::poll_fn(|cx| {

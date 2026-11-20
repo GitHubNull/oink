@@ -5,7 +5,9 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
 type Probe = Arc<dyn Fn() -> String + Send + Sync>;
-type State = (Mutex<(bool, String)>, Condvar, Mutex<Vec<(String, Probe)>>);
+/// (finished, phase, armed). A deferred scenario registers its failure probes
+/// before the deadline starts, so a short fixture budget cannot race setup.
+type State = (Mutex<(bool, String, bool)>, Condvar, Mutex<Vec<(String, Probe)>>);
 thread_local! {
     static CURRENT: RefCell<Weak<State>> = const { RefCell::new(Weak::new()) };
 }
@@ -21,8 +23,17 @@ impl Scenario {
         Self::with_limit(format!("{module}::{name}"), Duration::from_secs(180), "scenario entry")
     }
     pub(crate) fn with_limit(name: String, limit: Duration, initial_phase: &str) -> Self {
+        Self::spawn(name, limit, initial_phase, true)
+    }
+    /// Fixture-only: start the deadline only after `arm`, so probes registered
+    /// during startup are always present in the diagnostic dump.
+    #[allow(dead_code)] // Test binaries without the short fixture include this module.
+    pub(crate) fn with_limit_deferred(name: String, limit: Duration, initial_phase: &str) -> Self {
+        Self::spawn(name, limit, initial_phase, false)
+    }
+    fn spawn(name: String, limit: Duration, initial_phase: &str, armed: bool) -> Self {
         let state = Arc::new((
-            Mutex::new((false, String::new())),
+            Mutex::new((false, String::new(), armed)),
             Condvar::new(),
             Mutex::new(Vec::new()),
         ));
@@ -33,39 +44,45 @@ impl Scenario {
             .name("scenario-watchdog".into())
             .spawn(move || {
                 let (lock, wake, diagnostics) = &*waiting;
-                let (finished, _) = wake
-                    .wait_timeout_while(lock.lock().unwrap(), limit, |state| !state.0)
-                    .unwrap();
-                if !finished.0 {
-                    // Bypass libtest capture: exit() cannot return its buffered
-                    // output to the harness, so eprintln! loses the last phase.
-                    use std::io::Write;
-                    let _ = writeln!(
-                        std::io::stderr().lock(),
-                        "SCENARIO WATCHDOG: {name}; pid={}; limit={limit:?}; last phase={}; synchronous call, blocked worker or teardown did not finish",
-                        std::process::id(), finished.1
-                    );
-                    drop(finished);
-                    // Probes run only on failure, outside the executor and the
-                    // phase lock. A blocked/poisoned diagnostic must not hide the
-                    // original watchdog or prevent later probes from being read.
-                    match diagnostics.try_lock() {
-                        Ok(probes) => {
-                            for (label, probe) in probes.iter() {
-                                let _ = writeln!(std::io::stderr().lock(), "WATCHDOG DIAGNOSTIC: {label}");
-                                let dump = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe()))
-                                    .unwrap_or_else(|_| "diagnostic panicked".into());
-                                let _ = writeln!(std::io::stderr().lock(), "{dump}");
+                let mut waiting = lock.lock().unwrap();
+                while !waiting.2 && !waiting.0 {
+                    waiting = wake.wait(waiting).unwrap();
+                }
+                if !waiting.0 {
+                    let (finished, _) = wake
+                        .wait_timeout_while(waiting, limit, |state| !state.0)
+                        .unwrap();
+                    if !finished.0 {
+                        // Bypass libtest capture: exit() cannot return its buffered
+                        // output to the harness, so eprintln! loses the last phase.
+                        use std::io::Write;
+                        let _ = writeln!(
+                            std::io::stderr().lock(),
+                            "SCENARIO WATCHDOG: {name}; pid={}; limit={limit:?}; last phase={}; synchronous call, blocked worker or teardown did not finish",
+                            std::process::id(), finished.1
+                        );
+                        drop(finished);
+                        // Probes run only on failure, outside the executor and the
+                        // phase lock. A blocked/poisoned diagnostic must not hide the
+                        // original watchdog or prevent later probes from being read.
+                        match diagnostics.try_lock() {
+                            Ok(probes) => {
+                                for (label, probe) in probes.iter() {
+                                    let _ = writeln!(std::io::stderr().lock(), "WATCHDOG DIAGNOSTIC: {label}");
+                                    let dump = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe()))
+                                        .unwrap_or_else(|_| "diagnostic panicked".into());
+                                    let _ = writeln!(std::io::stderr().lock(), "{dump}");
+                                }
+                            }
+                            Err(error) => {
+                                let _ = writeln!(std::io::stderr().lock(), "watchdog diagnostics unavailable: {error}");
                             }
                         }
-                        Err(error) => {
-                            let _ = writeln!(std::io::stderr().lock(), "watchdog diagnostics unavailable: {error}");
-                        }
+                        // A panic here would only kill this watchdog thread. Exiting
+                        // makes the test fail even when runtime Drop is waiting for
+                        // an uninterruptible spawn_blocking task or native thread.
+                        std::process::exit(101);
                     }
-                    // A panic here would only kill this watchdog thread. Exiting
-                    // makes the test fail even when runtime Drop is waiting for
-                    // an uninterruptible spawn_blocking task or native thread.
-                    std::process::exit(101);
                 }
             })
             .unwrap();
@@ -73,6 +90,12 @@ impl Scenario {
             state,
             worker: Some(worker),
         }
+    }
+    /// Start a deferred deadline. Registration must already be complete.
+    #[allow(dead_code)] // Only the short fixtures defer their deadline.
+    pub(crate) fn arm(&self) {
+        self.state.0.lock().unwrap().2 = true;
+        self.state.1.notify_one();
     }
 }
 impl Drop for Scenario {
@@ -160,7 +183,7 @@ mod tests {
                 .unwrap();
             if case == "executor" {
                 runtime.block_on(async {
-                    let _scenario = Scenario::with_limit(
+                    let scenario = Scenario::with_limit_deferred(
                         format!("{}::watchdog fixture", module_path!()),
                         Duration::from_millis(50),
                         "blocked synchronous call",
@@ -173,6 +196,9 @@ mod tests {
                     on_timeout("broken probe", || panic!("diagnostic fixture panic"));
                     on_timeout("after broken probe", || "routing=blocked; grant=pending".into());
                     let _held = locked.lock().unwrap();
+                    // Every probe is registered before the 50 ms fixture budget
+                    // starts; a slow machine must not empty the diagnostic dump.
+                    scenario.arm();
                     loop {
                         std::thread::park();
                     }
@@ -188,12 +214,14 @@ mod tests {
                     });
                     entered.await.unwrap();
                 });
-                let _scenario = Scenario::with_limit(
+                let scenario = Scenario::with_limit_deferred(
                     format!("{}::watchdog fixture", module_path!()),
                     Duration::from_millis(50),
                     "blocked runtime teardown",
                 );
                 on_timeout("fixture teardown", || "native publication=pending".into());
+                // The probe exists before the fixture deadline starts.
+                scenario.arm();
                 // Drop the runtime before its watchdog when unwinding.
                 let _runtime = runtime;
                 panic!("force unwind with an unfinished blocking task");

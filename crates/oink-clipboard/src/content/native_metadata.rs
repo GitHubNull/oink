@@ -3,7 +3,10 @@
 use crate::model::{NodeId, Unavailable};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, io};
+/// Native promise projection is consumed by the macOS/Windows publishers only.
+#[cfg(any(windows, target_os = "macos", all(test, debug_assertions)))]
 mod projection;
+#[cfg(any(windows, target_os = "macos", all(test, debug_assertions)))]
 pub(crate) use projection::inventory as project_inventory;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]

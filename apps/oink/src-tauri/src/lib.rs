@@ -52,6 +52,8 @@ mod panel_macos;
 mod shell;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod system_locale;
+#[cfg(target_os = "linux")]
+mod tray_linux;
 #[cfg(target_os = "macos")]
 mod window_paint;
 #[cfg(target_os = "macos")]

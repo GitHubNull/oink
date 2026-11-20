@@ -15,7 +15,8 @@ const state = {
 
 export function ProfileHotkeyPreview() {
   setLanguage(new URLSearchParams(location.search).get('lang') ?? 'zh-Hans');
-  const platform = new URLSearchParams(location.search).get('platform') === 'win' ? 'win' : 'mac';
+  const platformParam = new URLSearchParams(location.search).get('platform');
+  const platform = platformParam === 'win' ? 'win' : platformParam === 'linux' ? 'linux' : 'mac';
   const [hotkeys, setHotkeys] = useState<Record<string, string>>({ b: 'Control+Alt+Shift+2' });
   return <div style={{ padding: 24, maxWidth: 640, background: 'var(--ok-raised)', minHeight: '100vh', boxSizing: 'border-box' }}>
     <ProfileList state={state} platform={platform} hotkeys={hotkeys}

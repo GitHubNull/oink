@@ -9,6 +9,14 @@ describe('target-specific key mapping edits',()=>{
     expect(result.macos).toBe(current.macos);expect(result.overrides).toBe(current.overrides);
     expect(result.windows.reverse_wheel).toBe(false);expect(result.windows.keyboard.table).toContainEqual({from:40,to:41});
   });
+  it('edits the mac target from Linux with the Windows-style source table',()=>{
+    const keyboard={preset:'none' as const,table:[]};
+    const current:InputTransform={macos:{reverse_wheel:false,keyboard},windows:{reverse_wheel:false,keyboard},overrides:[]};
+    const result=editTransform(current,'linux',{...DEFAULT_PREFS,keyPreset:'win'},true);
+    expect(result.macos.reverse_wheel).toBe(true);
+    expect(result.macos.keyboard.table).toContainEqual({from:0x700e0,to:0x700e3});
+    expect(readKeyboardMapping(result.macos.keyboard,'linux').map.keys.ctrl).toBe('command');
+  });
   it('uses an exclusive Caps tap/hold mapping without a duplicate ordinary Caps entry',()=>{
     const current:InputTransform={macos:{reverse_wheel:false,keyboard:{preset:'none',table:[]}},windows:{reverse_wheel:false,keyboard:{preset:'none',table:[]}},overrides:[]};
     const prefs={...DEFAULT_PREFS,keyPreset:'custom' as const,capsSplit:true,keyCustom:{...DEFAULT_PREFS.keyCustom,mac:{keys:{caps:'shift',control:'win',option:'alt',command:'ctrl',shift:'shift'},capsLong:'caps'}}};

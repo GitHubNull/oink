@@ -2,6 +2,7 @@
 //! group networking or calls the privileged path during discovery/startup.
 use serde::{Deserialize, Serialize};
 mod cache;
+#[cfg(any(windows, test))]
 mod progress;
 #[cfg(any(windows, test))]
 mod windows_presence;

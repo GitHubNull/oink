@@ -57,6 +57,7 @@ fn label(language: UiLanguage, id: &str) -> &'static str {
             "すべての画面を表示",
             "모든 화면 표시",
         ],
+        "panel" => ["Open Panel", "打开面板", "パネルを開く", "패널 열기"],
         "pause" => ["Pause sharing", "暂停共享", "共有を一時停止", "공유 일시 중지"],
         "resume" => ["Resume sharing", "恢复共享", "共有を再開", "공유 재개"],
         "show" => ["Show main window", "显示主界面", "メインウインドウを表示", "주 창 표시"],
@@ -70,6 +71,11 @@ fn label(language: UiLanguage, id: &str) -> &'static str {
         UiLanguage::Korean => 3,
         _ => 0,
     }]
+}
+/// The panel entry is not a device control: it opens the local panel window and
+/// stays available while connected or disconnected.
+pub fn panel_label(language: UiLanguage) -> &'static str {
+    label(language, "panel")
 }
 fn invokable(action: Option<&CardAction>) -> bool {
     matches!(action, Some(CardAction::Invoke { .. }))
@@ -741,5 +747,32 @@ mod startup_menu_tests {
             );
         }
         assert!(shell_command("mouse-shared").is_none());
+    }
+
+    #[test]
+    fn panel_entry_has_a_distinct_label_in_every_language() {
+        for language in [
+            UiLanguage::English,
+            UiLanguage::SimplifiedChinese,
+            UiLanguage::Japanese,
+            UiLanguage::Korean,
+        ] {
+            let panel = panel_label(language);
+            assert!(!panel.is_empty());
+            for id in [
+                "keyboard",
+                "mouse",
+                "game",
+                "microphone",
+                "audio",
+                "pause",
+                "resume",
+                "show",
+                "about",
+                "quit",
+            ] {
+                assert_ne!(panel, label(language, id), "panel label must be distinct from {id}");
+            }
+        }
     }
 }

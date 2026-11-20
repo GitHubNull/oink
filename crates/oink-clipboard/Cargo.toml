@@ -11,7 +11,7 @@ repository.workspace = true
 # Recompile the private production path on AppKit's main thread without libtest.
 [[test]]
 name = "native_linked_promise"
-path = "src/lib.rs"
+path = "src/native_linked_promise.rs"
 harness = false
 
 [dependencies]

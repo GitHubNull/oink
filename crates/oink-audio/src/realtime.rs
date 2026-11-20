@@ -49,9 +49,11 @@ impl Signal {
     /// Real-time safe, coalesced to one outstanding work notification. Does not
     /// wait for the worker or release any shared ownership.
     pub fn notify(&self) {
-        if self.0.pending.swap(true, Ordering::Release) {
-            return;
+        if !self.0.pending.swap(true, Ordering::Release) {
+            self.signal();
         }
+    }
+    fn signal(&self) {
         #[cfg(target_os = "macos")]
         // SAFETY: Arc keeps the OS semaphore live for this call.
         unsafe {
@@ -120,7 +122,7 @@ impl Schedule {
             Ok(Self { raw })
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     pub(crate) fn device(_: u32, _: u64) -> Result<Self, String> {
         Ok(Self {})
     }

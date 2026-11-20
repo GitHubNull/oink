@@ -218,9 +218,9 @@ export function App() {
         let stopped=false;const stops:Array<()=>void>=[];
         void import('@tauri-apps/api/window').then(async ({getCurrentWindow})=>{
             const window=getCurrentWindow();
-            // macOS zoom keeps a floating shell; fullscreen and Windows
+            // macOS zoom keeps a floating shell; fullscreen and Windows/Linux
             // maximization fill the desktop without a gutter or corners.
-            const update=async()=>setMaximized(await window.isFullscreen() || (await window.isMaximized() && state.boot?.platform === 'windows'));
+            const update=async()=>setMaximized(await window.isFullscreen() || (await window.isMaximized() && state.boot?.platform !== 'macos'));
             await update();
             const resized=await window.onResized(()=>{void update();});
             const focused=await window.onFocusChanged(event=>setWindowActive(event.payload));
@@ -239,7 +239,7 @@ export function App() {
         return observePanel(winEl);
     }, [view,winEl,self?.id,!!prefs.local]);
     useEffect(() => {
-        if (state.boot?.platform === 'windows' && prefs.local) void shell.setStatusIcon(prefs.local.show_status_icon).catch(() => agent.fail('unavailable'));
+        if (state.boot?.platform !== 'macos' && prefs.local) void shell.setStatusIcon(prefs.local.show_status_icon).catch(() => agent.fail('unavailable'));
     }, [state.boot?.platform,prefs.local?.show_status_icon]);
     useEffect(() => {if(prefs.local)void shell.setLogLevel(prefs.local.log_level).catch(()=>agent.fail('unavailable'));},[prefs.local?.log_level]);
     useEffect(() => {if(prefs.local)void shell.setLanguage(prefs.local.ui_language).catch(()=>agent.fail('unavailable'));},[prefs.local?.ui_language]);
@@ -706,9 +706,9 @@ export function App() {
                     else {
                         setNavOpen(true);
                         setNavMode(navMode === action ? 'devices' : action);
-                    } }} version={state.boot?.version ?? version} sideExtra={navMode === 'add' ? <SelfInfo container={winEl}/> : null} titleEnd={<><UpgradeButton/><PromoArea sponsor={!prefs.presentation.hide_sponsor} container={winEl}/></>} titleCenter={self?.paused ? <span className="win__paused"><PauseGlyph/>{tr('共享已暂停')}</span> : null} navBack={platform === 'win' && navMode !== 'devices' ? { title: navMode === 'add' ? tr('添加设备') : tr('设置'), label: tr('返回设备列表'), onBack: () => setNavMode('devices') } : null} nav={collapsed => <>
+                    } }} version={state.boot?.version ?? version} sideExtra={navMode === 'add' ? <SelfInfo container={winEl}/> : null} titleEnd={<><UpgradeButton/><PromoArea sponsor={!prefs.presentation.hide_sponsor} container={winEl}/></>} titleCenter={self?.paused ? <span className="win__paused"><PauseGlyph/>{tr('共享已暂停')}</span> : null} navBack={platform !== 'mac' && navMode !== 'devices' ? { title: navMode === 'add' ? tr('添加设备') : tr('设置'), label: tr('返回设备列表'), onBack: () => setNavMode('devices') } : null} nav={collapsed => <>
           <div className="nav-stack">
-            {platform === 'win' && <RequestsGroup pairing={pairing} collapsed={collapsed} onExpand={() => setNavOpen(true)} hidden={navMode === 'settings'}/>}
+            {platform !== 'mac' && <RequestsGroup pairing={pairing} collapsed={collapsed} onExpand={() => setNavOpen(true)} hidden={navMode === 'settings'}/>}
             <div className="nav-view" key={navMode} data-view={navMode} data-anim={navSwitched ? '' : undefined}>{platform === 'mac' && <><AddHead open={navMode !== 'devices'} title={navMode === 'add' ? tr('添加设备') : tr('设置')} onBack={() => setNavMode('devices')}/><RequestsGroup pairing={pairing} collapsed={collapsed} onExpand={() => setNavOpen(true)} hidden={navMode === 'settings'}/></>}{navMode === 'add' ? <AddPanel pairing={pairing}/> : navMode === 'settings' ? <SettingsNav platform={platform} query={query} onQuery={setQuery} active={section} onJump={id => setJump({ section: id, n: Date.now() })}/> : <DeviceList onGrantPermission={grantDevicePermission} onGrantAccessibility={() => { void accessibilityGrant.grant('accessibility'); }} devices={devices} selectedId={selectedDevice} onSelect={id => { setNavOpen(true); selectDevice(id); }} onToggle={toggle} onPause={menu.onPause} onSpeaker={menu.onSpeaker} onMicrophone={microphone} hiddenScreens={hiddenScreens} collapsed={collapsed} now={Date.now()}/>}</div>
           </div>
         </>}>

@@ -102,6 +102,7 @@ pub(super) fn start() {
         }
     });
 }
+#[cfg(windows)]
 pub(super) fn progress(step: MicrophonePluginStep) {
     let mut state = cache().state.lock().unwrap_or_else(|e| e.into_inner());
     if state.operation_pending && state.value.status.step != Some(step) {

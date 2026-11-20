@@ -54,7 +54,10 @@ pub struct Sample {
 static CAPTURE_COUNT: AtomicU64 = AtomicU64::new(0);
 static CAPTURE_MAX: AtomicU64 = AtomicU64::new(0);
 static CAPTURE_WAIT: AtomicU64 = AtomicU64::new(0);
+/// Native keyboard/pointer callbacks own this; Linux capture has no callback timer.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) struct CaptureTimer(Instant);
+#[cfg(any(target_os = "macos", windows))]
 impl CaptureTimer {
     pub fn new() -> Self {
         Self(Instant::now())
@@ -64,6 +67,7 @@ impl CaptureTimer {
         CAPTURE_WAIT.fetch_max(u64::from(milliseconds) * 1000, Ordering::Relaxed);
     }
 }
+#[cfg(any(target_os = "macos", windows))]
 impl Drop for CaptureTimer {
     fn drop(&mut self) {
         CAPTURE_COUNT.fetch_add(1, Ordering::Relaxed);

@@ -389,3 +389,38 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - 用户决策（第五轮交接 §6 路径 B）：**书面例外**。F4 触摸板/触摸/精细滚动因本机无触摸硬件（`xinput` 仅 USB 键鼠与 PiKVM，无触摸板/触摸屏）登记 BLOCKED，不作为阶段 2 阻塞项；F5 Chromium 源合成拖拽起始（平台限制）与 F6 Firefox 文件源（未实现）保持登记，红证据与绊线保留。
 - 其余门槛均有证据：A/A2/B/C/D/E 机制、GTK/Qt/浏览器输入矩阵、FUSE 私有挂载、真机麦克风、物理按键（`hardware-input-user.log`：key 34/35、button 17/17、motion 183）、锁屏/切换。
 - 阶段 2 门槛据此**以书面例外关闭**；进入产品阶段 3（Linux 桌面壳接入），实施计划与波次见本轮实施记录（阶段 3 结束时补记）。本次例外不放宽 F5/F6 的登记，也不改变后续阶段用真实证据收口的义务。
+
+## 阶段 3 实施记录（2026-11-20 ～ 2026-11-21）
+
+### 入口、后台与桌面生命周期（已推送 C1–C3）
+
+- C1 `84a3b82`：启用 Linux Tauri 依赖与 `main`/`lib` 模块，接入 UI 入口与启动骨架；Wayland/无图形会话拒绝启动并给出准确提示。
+- C2 `77a3602`：真实 X11 input/display 后端与 GLib 主循环；输入 `capture_available()` 如实为 false（完整语义属阶段 4），XTEST 注入、`XQueryPointer` 光标；显示用 XRandR 枚举与监听。
+- C3 `72e22a2`：Linux 关主窗 → `prevent_close` + `hide`，共享不停止；二次启动经 `show_window` 重显；`oink-agent reopen` 停止旧对并拉起新对；窗口尺寸契约（Main 1040×680+24、min 820×560、Panel 360×520）有门禁测试。
+- 证据：`w1/`、`w2/session3`（10/10）、`w3/session2`（14/14）；红证据 `w2/diag1,diag2`、`w3/session1` 保留。
+
+### 本轮 W0–W7（C4 本地提交，未推送）
+
+- W0 基线：HEAD `c5b94e0` 上 clippy 为 71 errors + 1 manifest warning，`cargo fmt --check` 通过；失败集归档 `baseline-*`。
+- W1 Linux 托盘：新增 `apps/oink/src-tauri/src/tray_linux.rs`（SNI 探测、TrayIcon 生命周期、可见性、面板开关、光标锚点）。共享 `build_menu(panel_label)` 复用后端菜单模型；面板项四语言标签由 `native_controls::panel_label` 提供并在 `app.rs` 拦截 `native-panel`；`commands.rs` 的 `set_status_icon` 接线。无 watcher 时仅 warn 并跳过，主窗不受影响。修复 `NameHasOwner` 回复按元组读取（原先裸 `bool` 恒为 false，有宿主也会判缺失）并补单测。
+- W2 前端 Linux 全分支：`App.tsx` 的 chrome、返回、导航组与托盘开关按 `!== mac` 处理；`PackageDrop`/`Upgrade` 对 Linux 拒绝 dmg/msi 拖放并保留手动发布页；设置 schema 新增 `not: Platform`，Linux 隐藏虚拟麦克风；pasteAsFile 文案改用“文件管理器”；`SettingsPreview` 支持 `?platform=linux`；`app.css` 中/日/韩字体栈补 Noto CJK 与 Droid 回退；新增 Linux 平台用例。`npm run typecheck`/`test`/`build` 全绿（1536 tests）。
+- W3 零告警：71 errors + 1 manifest warning → 0（`cargo clippy --locked --workspace --all-targets -- -D warnings` rc=0）。按平台 cfg 门控或窄作用域 allow；`oink-clipboard` 把 `lib.rs` 主体拆到 `body.rs` 并经 `native_linked_promise.rs` 双入口 include，消除同路径多 target 的 manifest warning，保留 macOS 主线程测试。新增探针/助手加入 500 行门禁。
+- W4 测试基线：修复 watchdog fixture 竞态（deferred-arm：注册探针后再起表），7 条红 → 17 ok / 0 failed，断言未弱化。全量 `cargo test --locked --workspace --no-fail-fast`：112 target，rc=101，29 条失败全部为存量（10 剪贴板依赖、8 多节点/流、3 DnD、6 `oink-clipboard`、2 `oink-network`）；后 8 条在 HEAD `2114c19` 用独立 worktree 对照复现；本轮引入 0，不 skip、不删断言。`--autostart` 链路为 `handle_autostart_arg` → `LOGIN_LAUNCH_ENV` → `launched_at_login` → `shows_on_start`，后者有单测；XDG 登录项注册留阶段 7。
+- W5 托盘探针：新增 `build-support/linux_sni_watcher.py`（私有总线实现 StatusNotifierWatcher + dbusmenu 驱动）与 `linux_phase3_tray_probe.py`（Phase A 无宿主降级；Phase B 注册、菜单、面板开/关/重开、菜单显示主界面）。私有 Xephyr 内 18/18 checks；W2/W3 回归 10/10、14/14（`w4/regression/`）。
+- W6 中文渲染：私有 Xephyr `zh_CN.UTF-8` 下托盘探针 18/18（`w6/native`），主窗/面板截图中文正常；设置页 9 个 Linux 分区（general/appearance/layout/input/clipboard/audio/shortcuts/tools/diagnostics）无 tofu；`fc-match` 命中 Noto Sans CJK SC，回退 Droid Sans Fallback（`w6/rendering-notes.txt`）。真实 Cinnamon 会话的托盘视觉验收交用户执行（命令见交接文档），不代启动、不注入。
+- W7 文档与 C4：本节与第七轮交接文档；C4 仅本地提交，未推送、未 tag。
+
+### 已知限制（阶段 3 边界）
+
+- 托盘依赖 `org.kde.StatusNotifierWatcher`；无 SNI 宿主静默降级（warn），不阻断功能。
+- 面板定位初版 = 光标锚点（libappindicator 不提供托盘矩形），高度内容测量；精细化留后续阶段。
+- 输入完整语义（grab/回放/XKB/相对/快捷键/锁屏/热插拔）属阶段 4；当前 `capture_available=false` 如实上报。
+- 剪贴板/文件/DnD、音频/虚拟麦克风属阶段 4–6；F4 BLOCKED、F5/F6 保持登记。
+- XDG autostart 注册属阶段 7；打包/签名/安装包升级属阶段 8（Linux 已隐藏拖放安装包入口，保留手动发布页）。
+- Wayland/XWayland 会话拒绝启动为当前设计。
+
+### 门禁与证据（本机，证据目录被 gitignore）
+
+- `cargo fmt --all -- --check` 通过；clippy rc=0；全量测试为 29 条登记基线；前端 typecheck/test/build 绿；离线 `discover -p 'test_linux*.py'` 289 项 OK；托盘探针 18/18（中英各一轮）、W2/W3 回归全绿。
+- 证据根：`.release-tools/linux-probes/phase3-gate-20261120/`（`baseline-*`、`w1`、`w2`、`w3`、`w4`、`w6`；最终门禁与探针复跑在 `w7/`）。
+- 交接：`doc/handover/2026-11-21-linux-x11-phase3-closure.md`。

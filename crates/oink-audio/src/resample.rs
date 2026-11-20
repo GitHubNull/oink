@@ -95,8 +95,11 @@ impl History {
     }
 }
 
+/// Consumed by the macOS and Windows capture/playout backends and their tests.
+#[cfg(any(target_os = "macos", windows, test))]
 use std::time::{Duration, Instant};
 
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) struct StereoResampler {
     kernel: crate::resample::Kernel,
     history: crate::resample::History,
@@ -109,6 +112,7 @@ pub(crate) struct StereoResampler {
     pending_sequence: u64,
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 impl StereoResampler {
     #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn new(rate: f64) -> Self {
@@ -137,6 +141,8 @@ impl StereoResampler {
     pub(crate) fn output_capacity(&self, input_samples: usize) -> usize {
         ((self.pending.len() + input_samples) as f64 / self.step).ceil() as usize + 4
     }
+    /// Backends reset this between streams; tests only exercise conversion.
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pub(crate) fn reset(&mut self) {
         self.pending.clear();
         self.history.clear();

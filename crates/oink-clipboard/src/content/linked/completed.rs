@@ -23,6 +23,8 @@ struct LocalRoot {
 /// receipt. Recognize only that old digest-shaped identity during recovery;
 /// current arrival-based receives keep their ordinary restart failure rule.
 /// User decision 2026-10-29: preserve received bytes, without another proof.
+/// Legacy descriptors exist in the macOS and Windows on-disk catalogs only.
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn legacy_pending_roots(descriptor: &serde_json::Value) -> HashSet<NodeId> {
     descriptor["fulfilled"]
         .as_array()
@@ -184,6 +186,7 @@ impl FinalLocal {
         *link = remaining;
         Ok(())
     }
+    #[cfg(any(windows, target_os = "macos"))]
     pub(crate) fn recover_legacy_received(
         &mut self,
         link: &mut Option<Descriptor>,

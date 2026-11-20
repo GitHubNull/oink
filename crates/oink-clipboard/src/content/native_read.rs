@@ -81,10 +81,14 @@ pub(crate) fn remote_read() -> Option<Rc<Read>> {
     })
 }
 
+/// Returning native read callbacks exist on macOS and Windows; Linux has no
+/// synchronous native clipboard reader yet.
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) struct Callback {
     read: Rc<Read>,
     previous: Option<Rc<Read>>,
 }
+#[cfg(any(windows, target_os = "macos", test))]
 impl Callback {
     pub(crate) fn begin() -> Self {
         let read = Rc::new(Read {
@@ -105,6 +109,7 @@ impl Callback {
         timed_out()
     }
 }
+#[cfg(any(windows, target_os = "macos", test))]
 impl Drop for Callback {
     fn drop(&mut self) {
         CURRENT.set(self.previous.take());

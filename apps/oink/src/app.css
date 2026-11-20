@@ -8,14 +8,19 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 
 /* The UI kit's font stacks list Simplified Chinese faces first, which would
    draw Japanese and Korean with Chinese glyph forms. The document language
-   selects each language's own system faces instead (Latin stays on SF / Segoe). */
+   selects each language's own system faces instead (Latin stays on SF / Segoe).
+   The Noto families cover Linux, where the platform faces are absent. */
+:root:lang(zh-Hans) {
+  --ok-font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", "Segoe UI", system-ui, sans-serif;
+  --ok-font-display: ui-rounded, "SF Pro Rounded", "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", system-ui, sans-serif;
+}
 :root:lang(ja) {
-  --ok-font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif;
-  --ok-font-display: ui-rounded, "SF Pro Rounded", "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+  --ok-font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Yu Gothic UI", "Meiryo UI", "Noto Sans CJK JP", "Noto Sans JP", "Droid Sans Fallback", system-ui, sans-serif;
+  --ok-font-display: ui-rounded, "SF Pro Rounded", "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", "Yu Gothic UI", "Noto Sans CJK JP", "Noto Sans JP", "Droid Sans Fallback", system-ui, sans-serif;
 }
 :root:lang(ko) {
-  --ok-font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
-  --ok-font-display: ui-rounded, "SF Pro Rounded", "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  --ok-font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
+  --ok-font-display: ui-rounded, "SF Pro Rounded", "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans CJK KR", "Noto Sans KR", system-ui, sans-serif;
 }
 
 .page {

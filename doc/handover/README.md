@@ -24,7 +24,7 @@
 
 ## 索引
 
-当前续作入口：[第六轮：阶段 3 W1–W3 完成与 W4 待办](2026-11-21-linux-x11-phase3-w3-handoff.md)。前五轮保持历史快照；本机依赖已由 A2 入口在新树 `.tools/fresh-20261117` 获取。
+当前续作入口：[第七轮：阶段 3 收口（托盘/前端 Linux 分支/零告警/测试基线）](2026-11-21-linux-x11-phase3-closure.md)。前六轮保持历史快照；本机依赖已由 A2 入口在新树 `.tools/fresh-20261117` 获取。
 
 | 日期 | 范围 | 文档 | 状态 |
 |---|---|---|---|
@@ -33,7 +33,8 @@
 | 2026-11-17 | Linux X11 阶段 2 Qt 夹具验收后续作（第三轮） | [2026-11-17-linux-x11-phase2-qt-continuation.md](2026-11-17-linux-x11-phase2-qt-continuation.md) | 历史快照：Qt/GTK 文本矩阵已验收（代码 2d2061a） |
 | 2026-11-20 | Linux X11 阶段 2 A2–F 分波与 F 用户实证（第四轮） | [2026-11-20-linux-x11-phase2-af-waves.md](2026-11-20-linux-x11-phase2-af-waves.md) | 历史快照：A2/B/C/D/E 与 FUSE、真机麦克风、物理按键、锁屏完成；触摸类 BLOCKED，阶段 2 未通过，产品未开始 |
 | 2026-11-20 | Linux X11 阶段 2 收口状态与后续开发（第五轮） | [2026-11-20-linux-x11-phase2-closure-handoff.md](2026-11-20-linux-x11-phase2-closure-handoff.md) | 历史快照：除触摸类外全部收口；阶段 2 门槛随后按用户书面例外关闭（见 plan.md），阶段 3 实施中 |
-| 2026-11-21 | Linux X11 阶段 3 W1–W3 完成与 W4 待办（第六轮） | [2026-11-21-linux-x11-phase3-w3-handoff.md](2026-11-21-linux-x11-phase3-w3-handoff.md) | 进行中：W0–W3 完成并推送（72e22a2）；W4 托盘/全量门禁/文档未开始 |
+| 2026-11-21 | Linux X11 阶段 3 W1–W3 完成与 W4 待办（第六轮） | [2026-11-21-linux-x11-phase3-w3-handoff.md](2026-11-21-linux-x11-phase3-w3-handoff.md) | 历史快照：W0–W3 完成并推送（72e22a2）；W4 随后完成 |
+| 2026-11-21 | Linux X11 阶段 3 收口（第七轮） | [2026-11-21-linux-x11-phase3-closure.md](2026-11-21-linux-x11-phase3-closure.md) | 阶段 3 完成：托盘/前端 Linux 分支/零告警/29 条测试基线登记；C4 本地提交未推送；真实会话托盘视觉待用户确认 |
 
 ## 长期计划
 

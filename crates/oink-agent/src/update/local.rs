@@ -3,6 +3,7 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub(super) struct Staged {
     pub package: oink_update::local::Package,
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pub path: PathBuf,
     pub _directory: tempfile::TempDir,
 }
@@ -91,7 +92,9 @@ pub(super) fn open(node: &Node, path: &str) -> ApiResult<UpdateStatus> {
 }
 pub(super) fn install(node: &Node, expected: u64) -> ApiResult<UpdateStatus> {
     tracing::info!(step = "install_requested", expected_build = expected, "local upgrade");
-    let mut state = lock(&node.inner.update);
+    let state = lock(&node.inner.update);
+    #[cfg(any(target_os = "macos", windows))]
+    let mut state = state;
     let staged = state.local.as_ref().ok_or_else(|| api_error(Error::Policy))?;
     if staged.package.build != expected || state.status.phase != Phase::Ready {
         return Err(api_error(Error::Policy));
@@ -141,6 +144,7 @@ pub(super) fn install(node: &Node, expected: u64) -> ApiResult<UpdateStatus> {
 
 /// The received store owns hydration and grant acquisition. Ordinary files use
 /// an ordinary user-session read; SYSTEM only ever receives the staged copy.
+#[cfg(any(target_os = "macos", windows))]
 pub(super) fn copy_input(path: &Path, destination: &Path) -> Result<u64, Error> {
     if !path.is_absolute() {
         return Err(Error::WrongProduct);
@@ -160,6 +164,7 @@ pub(super) fn copy_input(path: &Path, destination: &Path) -> Result<u64, Error> 
     }
     copy_input_with(path, destination, oink_clipboard::received::open_file)
 }
+#[cfg(any(target_os = "macos", windows, test))]
 fn copy_input_with(
     path: &Path,
     destination: &Path,
@@ -196,6 +201,7 @@ fn copy_input_with(
     output.sync_all().map_err(|_| Error::Storage)?;
     Ok(count)
 }
+#[cfg(any(target_os = "macos", windows, test))]
 fn input_error(step: &'static str, error: std::io::Error) -> Error {
     tracing::info!(step, native_code=?error.raw_os_error(), detail=%error, "local package read unavailable");
     Error::PackageUnavailable

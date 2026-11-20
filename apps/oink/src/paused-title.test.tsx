@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { shell } from './api/client';
 import { agent } from './api/store';
 import type { DeviceCardsView, LocalPauseCard } from './api/cards';
 import { setLanguage } from './i18n';
@@ -19,7 +20,7 @@ beforeAll(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 });
-afterEach(() => { cleanup(); agent.reset(); localStorage.clear(); });
+afterEach(() => { cleanup(); agent.reset(); localStorage.clear(); vi.restoreAllMocks(); });
 
 function cards(paused: boolean, reason: LocalPauseCard['reason']): DeviceCardsView {
   return { schema: 1, stream: 'test', revision: '1', group: null, generatedAtMs: 0, exitVolume: null, emergencyDelivery: null,
@@ -28,7 +29,7 @@ function cards(paused: boolean, reason: LocalPauseCard['reason']): DeviceCardsVi
   };
 }
 
-for (const platform of ['macos', 'windows'] as const) {
+for (const platform of ['macos', 'windows', 'linux'] as const) {
   for (const [language, label] of [['zh-Hans', '共享已暂停'], ['en', 'Sharing paused']] as const) {
     describe(`${platform} paused title in ${language}`, () => {
       it.each(['local_user', 'remote_user', 'emergency', 'input_backlog'] as const)('shows a decorative pause glyph for %s, and hides the status on resume', reason => {
@@ -53,3 +54,20 @@ for (const platform of ['macos', 'windows'] as const) {
     });
   }
 }
+
+describe('tray visibility setting', () => {
+  const local = { notification_level: 'default', ui_language: 'auto', theme_mode: 'system', theme_accent: { light: '#2E7BFF', dark: '#5599FF' },
+    show_status_icon: true, confirm_quit: true, paste_as_file: true, log_level: 'info', log_max_mb: 1024 } as const;
+  it('applies the saved state through the shell on Linux but leaves macOS to the native shell', async () => {
+    const setStatusIcon = vi.spyOn(shell, 'setStatusIcon').mockResolvedValue();
+    agent.adopt('boot', { platform: 'linux', version: '0.1.0-beta.1', build: null, backend: 'agent' });
+    agent.adopt('localPreferences', local);
+    const linux = render(<App/>);
+    await waitFor(() => expect(setStatusIcon).toHaveBeenCalledWith(true));
+    linux.unmount();setStatusIcon.mockClear();
+    agent.adopt('boot', { platform: 'macos', version: '0.1.0-beta.1', build: null, backend: 'agent' });
+    render(<App/>);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(setStatusIcon).not.toHaveBeenCalled();
+  });
+});

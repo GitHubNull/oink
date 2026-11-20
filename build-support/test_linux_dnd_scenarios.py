@@ -162,7 +162,10 @@ class FramingTests(unittest.TestCase):
                  'linux_deps_archive.py', 'linux_deps_fetch.py',
                  'linux_input_app_page.html', 'test_linux_app_wave.py',
                  'test_linux_deps_archive.py', 'test_linux_deps_fetch.py',
-                 'test_linux_input_probe.py')
+                 'test_linux_input_probe.py',
+                 'linux_phase3_shell_probe.py', 'linux_phase3_w2_probe.py',
+                 'linux_phase3_w3_probe.py', 'linux_phase3_tray_probe.py',
+                 'linux_sni_watcher.py')
         for name in names:
             lines = Path(__file__).with_name(name).read_text().splitlines()
             with self.subTest(name=name):

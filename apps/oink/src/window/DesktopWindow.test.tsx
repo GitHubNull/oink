@@ -32,13 +32,14 @@ describe('native macOS titlebar',()=>{
   });
 });
 
-describe('Windows titlebar isolation',()=>{
-  it('keeps Windows controls and never requests macOS frame alignment',()=>{
+describe('Windows-style titlebar',()=>{
+  it.each(['win','linux'] as const)('keeps %s controls and never requests macOS frame alignment',platform=>{
     const query=vi.spyOn(shell,'titlebarCenter').mockResolvedValue(50);
     const noop=()=>{};
-    const {container}=render(<OinkProvider><DesktopWindow platform="win" state={{maximized:false,minimized:false,closed:false}} active title="Oink" onMinimize={noop} onToggleMaximize={noop} onClose={noop} onActivate={noop} navOpen onToggleNav={noop} nav={()=>null}>Canvas</DesktopWindow></OinkProvider>);
+    const {container}=render(<OinkProvider><DesktopWindow platform={platform} state={{maximized:false,minimized:false,closed:false}} active title="Oink" onMinimize={noop} onToggleMaximize={noop} onClose={noop} onActivate={noop} navOpen onToggleNav={noop} nav={()=>null}>Canvas</DesktopWindow></OinkProvider>);
     expect(container.querySelector('.mac-lights')).toBeNull();
     expect(container.querySelectorAll('.win-cap')).toHaveLength(3);
+    expect(container.querySelector<HTMLElement>('.win')!.getAttribute('data-platform')).toBe('win');
     expect(container.querySelector<HTMLElement>('.win__titlebar')!.style.getPropertyValue('--native-controls-offset')).toBe('');
     expect(query).not.toHaveBeenCalled();
   });

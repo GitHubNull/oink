@@ -454,17 +454,17 @@ impl Drop for Prepared {
 static APPROVED: std::sync::Mutex<Option<Prepared>> = std::sync::Mutex::new(None);
 #[cfg(target_os = "macos")]
 mod mac_provider;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 static TERMINATION_WAITING: AtomicBool = AtomicBool::new(false);
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn installation_termination() -> bool {
     APPROVED.lock().unwrap().is_some()
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn termination_waiting() -> bool {
     TERMINATION_WAITING.swap(false, Ordering::AcqRel)
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn request_native_termination() {
     TERMINATION_WAITING.store(true, Ordering::Release);
     if let Ok(node) = crate::backend::node() {
@@ -523,13 +523,15 @@ fn reopen_failed_install(node: &Node) {
 }
 #[cfg(not(windows))]
 fn install_candidate(node: Node) {
-    let mut token = match node.prepare_for_update() {
+    let token = match node.prepare_for_update() {
         Ok(token) => token,
         Err(blockers) => {
             install_failure(&node, Error::Busy, blockers);
             return;
         }
     };
+    #[cfg(target_os = "macos")]
+    let mut token = token;
     #[cfg(target_os = "macos")]
     let parent = match std::env::current_exe()
         .ok()
@@ -651,7 +653,7 @@ fn try_quit() {
 }
 /// Reopen is initiated off the AppKit thread; cancellation must be acknowledged
 /// before another process is launched or the current host is shut down.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn prepare_reopen(node: &Node) -> ApiResult<Prepared> {
     let (reply, wait) = std::sync::mpsc::sync_channel(1);
     crate::backend::on_main(move || {

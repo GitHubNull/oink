@@ -2,9 +2,10 @@
 //! Native representations stay raw on same-system transfers. Companion titles
 //! are read only on demand, from the same item and under the source's guards.
 use super::{Provider, guarded, unavailable};
-use crate::model::{
-    ContentItem, Inventory, NativeFormat, Representation, RepresentationData, StandardFormat, Unavailable,
-};
+use crate::model::{Inventory, NativeFormat, Representation, RepresentationData, Unavailable};
+#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+use crate::model::{ContentItem, StandardFormat};
+#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
 use oink_foundation::clipboard::ClipPlatform;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -173,6 +174,8 @@ pub(crate) fn capture(
 }
 /// Titles are advertised only when a native title source was offered. Actual
 /// bytes remain lazy; a source offering an empty/invalid title supplies no data.
+/// Only the macOS and Windows publishers advertise URL formats.
+#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
 pub(crate) fn names(item: &ContentItem, target: ClipPlatform) -> Vec<String> {
     let has_title = item
         .representations
@@ -215,6 +218,7 @@ pub(crate) fn names(item: &ContentItem, target: ClipPlatform) -> Vec<String> {
     names.into_iter().map(str::to_owned).collect()
 }
 impl Link {
+    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
     fn anchor(&self) -> io::Result<String> {
         fn escape(value: &str) -> String {
             value
@@ -232,6 +236,7 @@ impl Link {
         self.validate()?;
         serde_json::to_vec(self).map_err(|_| invalid())
     }
+    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
     pub(crate) fn decode(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() > MAX_WIRE_BYTES {
             return Err(unavailable(Unavailable::LimitExceeded));
@@ -247,6 +252,7 @@ impl Link {
         }
         Ok(())
     }
+    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
     pub(crate) fn render(&self, target: ClipPlatform, name: &str) -> io::Result<Vec<u8>> {
         self.validate()?;
         match (target, name) {
@@ -268,9 +274,11 @@ impl Link {
         }
     }
 }
+#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
 fn to_wide(text: &str) -> Vec<u8> {
     text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes).collect()
 }
+#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
 pub(crate) fn ansi(text: &str) -> io::Result<Vec<u8>> {
     #[cfg(windows)]
     {

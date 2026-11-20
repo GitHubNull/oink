@@ -387,6 +387,11 @@ pub fn run() {
             *handle.state::<Backend>().control.lock().unwrap() = Some(control);
             crate::app_icon::initialize(&handle);
             app.on_menu_event(|app,event| {
+                #[cfg(target_os = "linux")]
+                if event.id().as_ref() == "native-panel" {
+                    crate::tray_linux::toggle_panel(app);
+                    return;
+                }
                 if let Some(id) = event.id().as_ref().strip_prefix("native-") {
                     crate::native_controls::invoke(app,id);
                 }
@@ -403,6 +408,8 @@ pub fn run() {
                 crate::foreground_windows::install(&handle);
                 setup_tray(&handle)?;
             }
+            #[cfg(target_os = "linux")]
+            crate::tray_linux::install(&handle);
             forward_events(&handle);
             crate::native_controls::initialize(&handle);
             #[cfg(windows)]
@@ -531,10 +538,10 @@ pub fn run() {
             // Closing the product window keeps sharing alive without a window;
             // a second launch or the tray asks this same UI to show it again.
             api.prevent_close();
-            if let Some(window) = handle.get_webview_window("main") {
-                if window.hide().is_ok() {
-                    tracing::info!(view = "main", "product window hidden on close");
-                }
+            if let Some(window) = handle.get_webview_window("main")
+                && window.hide().is_ok()
+            {
+                tracing::info!(view = "main", "product window hidden on close");
             }
         }
         if let tauri::RunEvent::WindowEvent { label, event, .. } = &event {

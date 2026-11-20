@@ -124,7 +124,7 @@ fn refresh(app: &AppHandle) {
             return;
         }
         #[cfg(target_os = "linux")]
-        let _ = app;
+        crate::tray_linux::update(app, &model, language);
         #[cfg(target_os = "macos")]
         crate::dock_controls::update(app, &model);
         #[cfg(windows)]
@@ -133,10 +133,20 @@ fn refresh(app: &AppHandle) {
         }
     });
 }
-#[cfg(windows)]
-fn windows_menu(app: &AppHandle, model: &oink_agent::native_controls::Model) -> tauri::Result<()> {
+/// GTK and Windows both render the same backend-owned menu model. The Linux
+/// panel entry has no Windows equivalent, so callers pass its label only there.
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) fn build_menu(
+    app: &AppHandle,
+    model: &oink_agent::native_controls::Model,
+    panel_label: Option<&str>,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
     let menu = Menu::new(app)?;
+    if let Some(label) = panel_label {
+        menu.append(&MenuItem::with_id(app, "native-panel", label, true, None::<&str>)?)?;
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
     for group in &model.groups {
         let submenu = Submenu::new(app, &group.label, true)?;
         for item in &group.items {
@@ -161,6 +171,11 @@ fn windows_menu(app: &AppHandle, model: &oink_agent::native_controls::Model) -> 
             None::<&str>,
         )?)?;
     }
+    Ok(menu)
+}
+#[cfg(windows)]
+fn windows_menu(app: &AppHandle, model: &oink_agent::native_controls::Model) -> tauri::Result<()> {
+    let menu = build_menu(app, model, None)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(menu.clone()))?;
         crate::tray_windows::set_menu(menu, model)?;

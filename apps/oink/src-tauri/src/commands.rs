@@ -158,8 +158,7 @@ pub fn shell_set_status_icon(app: AppHandle, visible: bool) -> Result<(), ShellE
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = (app, visible);
-        Err(ShellError::StatusIconUnavailable)
+        crate::tray_linux::set_visible(&app, visible).map_err(|_| ShellError::StatusIconUnavailable)
     }
 }
 
