@@ -1,13 +1,12 @@
-//! 截获线程：独立 X 连接上的 XI2 raw 观察。
+//! 截获线程：独立 X 连接上的 XI2 raw 观察、被动热键抓取与 Remote 主动抓取。
 //!
-//! Local 模式只在 root 上被动观察（不抢任何输入）；Remote 主动抓取、同步被动
-//! 抓取与热键属于 W3。线程用 self-pipe 唤醒，X 事件与 `capture_loop::poll` 的
-//! 定时器在同一线程上串行处理。
+//! 所有输入相关 X 请求都在这个线程上串行执行；其他线程只改共享愿望值并写
+//! self-pipe 唤醒。抓取/遮罩的增删由 `modes::Modes` 按当前安全状态对齐。
 
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -15,20 +14,48 @@ use std::time::{Duration, Instant};
 
 use oink_foundation::Point;
 use oink_foundation::input::CaptureMode;
-use x11_dl::xinput2::{
-    XI_HierarchyChanged, XI_RawButtonPress, XI_RawButtonRelease, XI_RawKeyPress, XI_RawKeyRelease, XI_RawMotion,
-    XIAllDevices, XIAllMasterDevices, XIEventMask, XIHierarchyEvent, XIRawEvent, XInput2,
-};
-use x11_dl::xlib::{Display, GenericEvent, XEvent, Xlib};
+use x11_dl::xlib::{Display, Xlib};
 
 use super::{X11Input, devices, event};
+use crate::InputBackend;
 use crate::InputError;
 use crate::capture_loop::{self, CaptureLoop, Wake};
+use crate::session_gate::SessionGate;
+use x11::{extension_opcode, query_cursor, select_hierarchy, select_raw};
+
+mod events;
+mod modes;
+mod x11;
+
+/// 没有 X 事件时也定期复核锁屏/截获请求，避免外部状态变化被无限期忽略。
+const GATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct CaptureThread {
     stopped: Arc<AtomicBool>,
     wake: UnixStream,
+    commands: mpsc::Sender<Command>,
     pub(super) handle: JoinHandle<()>,
+}
+
+enum Command {
+    Restore {
+        at: Point,
+        complete: Box<dyn FnOnce(bool) + Send>,
+    },
+}
+
+impl CaptureThread {
+    pub(super) fn notify(&self) {
+        let _ = (&self.wake).write(&[1]);
+    }
+
+    fn send_restore(&self, at: Point, complete: Box<dyn FnOnce(bool) + Send>) -> Result<(), InputError> {
+        self.commands
+            .send(Command::Restore { at, complete })
+            .map_err(|_| InputError::Platform("截获线程已停止".into()))?;
+        self.notify();
+        Ok(())
+    }
 }
 
 pub(super) fn start_loop(input: &X11Input, owner: Box<dyn CaptureLoop>) -> Result<(), InputError> {
@@ -53,52 +80,81 @@ fn start(input: &X11Input, owner: Box<dyn CaptureLoop>) -> Result<(), InputError
     let thread_wake = writer
         .try_clone()
         .map_err(|e| InputError::Platform(format!("无法复制截获唤醒管道：{e}")))?;
-    let thread_stopped = Arc::clone(&stopped);
-    let mode = Arc::clone(&input.mode);
+    let (commands, commands_rx) = mpsc::channel();
+    let startup = Startup {
+        mode: Arc::clone(&input.mode),
+        stopped: Arc::clone(&stopped),
+        safety: Arc::clone(&input.safety),
+        locked: Arc::clone(&input.locked),
+        commands: commands_rx,
+    };
     let (ready_tx, ready_rx) = mpsc::channel();
     let handle = std::thread::Builder::new()
         .name("oink-x11-capture".into())
-        .spawn(
-            move || match prepare(owner, mode, reader, thread_wake, thread_stopped) {
-                Ok(mut state) => {
-                    let _ = ready_tx.send(Ok(()));
-                    state.run();
-                    capture_loop::clear();
-                }
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error));
-                }
-            },
-        )
+        .spawn(move || match prepare(owner, reader, thread_wake, startup) {
+            Ok(mut state) => {
+                let _ = ready_tx.send(Ok(()));
+                state.run();
+                capture_loop::clear();
+            }
+            Err(error) => {
+                let _ = ready_tx.send(Err(error));
+            }
+        })
         .map_err(|e| InputError::Platform(format!("无法启动 X11 截获线程：{e}")))?;
-    match ready_rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            let _ = handle.join();
-            return Err(error);
-        }
-        Err(_) => {
-            stopped.store(true, Ordering::SeqCst);
-            let _ = (&writer).write(&[1]);
-            let _ = handle.join();
-            return Err(InputError::Platform("X11 截获线程启动超时".into()));
-        }
-    }
+    // 先登记再等就绪：启动期间的 set_mode/restore 只会写唤醒管道，不会死锁。
     *slot = Some(CaptureThread {
         stopped,
         wake: writer,
+        commands,
         handle,
     });
-    Ok(())
+    drop(slot);
+    match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            stop(input);
+            Err(error)
+        }
+        Err(_) => {
+            stop(input);
+            Err(InputError::Platform("X11 截获线程启动超时".into()))
+        }
+    }
 }
 
 pub(super) fn stop(input: &X11Input) {
     let thread = input.capture.lock().ok().and_then(|mut slot| slot.take());
     if let Some(thread) = thread {
         thread.stopped.store(true, Ordering::SeqCst);
-        let _ = (&thread.wake).write(&[1]);
+        thread.notify();
         let _ = thread.handle.join();
     }
+}
+
+/// 恢复请求交给截获线程有序执行；完成回调只在观测核验后触发。
+pub(super) fn restore_local(
+    input: &X11Input,
+    at: Point,
+    complete: Box<dyn FnOnce(bool) + Send>,
+) -> Result<(), InputError> {
+    {
+        let slot = input
+            .capture
+            .lock()
+            .map_err(|_| InputError::Platform("截获锁已损坏".into()))?;
+        if let Some(thread) = slot.as_ref() {
+            return thread.send_restore(at, complete);
+        }
+    }
+    input.inject(&oink_foundation::input::InjectEvent::MoveTo { pos: at })?;
+    input.set_mode(CaptureMode::Local)?;
+    input.inject(&oink_foundation::input::InjectEvent::MoveTo { pos: at })?;
+    let placed = input
+        .cursor_position()
+        .is_ok_and(|point| (point.x - at.x).abs() <= 1.0 && (point.y - at.y).abs() <= 1.0);
+    complete(placed);
+    Ok(())
 }
 
 /// `InputBackend::start` 的适配器：把每条事件原样交给回调。
@@ -121,14 +177,21 @@ impl CaptureLoop for CallbackOwner {
 
 struct LoopState {
     xlib: Arc<Xlib>,
-    xi: XInput2,
     dpy: *mut Display,
+    raw_dpy: *mut Display,
     opcode: i32,
     translator: event::Translator,
+    mode: Arc<Mutex<CaptureMode>>,
     stopped: Arc<AtomicBool>,
     reader: UnixStream,
     reader_buf: [u8; 64],
     supported_repeat: bool,
+    safety: Arc<SessionGate>,
+    locked: Arc<AtomicI8>,
+    commands: mpsc::Receiver<Command>,
+    modes: modes::Modes,
+    active: bool,
+    next_sync: Instant,
 }
 
 impl Drop for LoopState {
@@ -136,139 +199,121 @@ impl Drop for LoopState {
         if !self.supported_repeat {
             tracing::warn!("X server 不支持可检测的自动重复；键盘重复按原生按下上报");
         }
-        // SAFETY: 截获线程独占这个连接，join 前不会再有人使用。
-        unsafe { (self.xlib.XCloseDisplay)(self.dpy) };
+        // 先撤抓取与遮罩，再关连接；Modes 没有 Drop，不会再触碰已关闭的 dpy。
+        self.modes.shutdown();
+        // SAFETY: 两个连接都由截获线程独占，join 前不会再有人使用。
+        unsafe {
+            (self.xlib.XCloseDisplay)(self.raw_dpy);
+            (self.xlib.XCloseDisplay)(self.dpy);
+        }
     }
+}
+
+struct Startup {
+    mode: Arc<Mutex<CaptureMode>>,
+    stopped: Arc<AtomicBool>,
+    safety: Arc<SessionGate>,
+    locked: Arc<AtomicI8>,
+    commands: mpsc::Receiver<Command>,
 }
 
 fn prepare(
     owner: Box<dyn CaptureLoop>,
-    mode: Arc<Mutex<CaptureMode>>,
     reader: UnixStream,
     writer: UnixStream,
-    stopped: Arc<AtomicBool>,
+    startup: Startup,
 ) -> Result<LoopState, InputError> {
     let xlib = Arc::new(Xlib::open().map_err(|e| InputError::Platform(format!("截获线程加载 libX11 失败：{e}")))?);
-    let xi = XInput2::open().map_err(|e| InputError::Platform(format!("截获线程加载 libXi 失败：{e}")))?;
+    let xi = Arc::new(
+        x11_dl::xinput2::XInput2::open().map_err(|e| InputError::Platform(format!("截获线程加载 libXi 失败：{e}")))?,
+    );
     let dpy = super::open_display(&xlib)?;
-    let state = match build_state(Arc::clone(&xlib), xi, dpy, mode, reader, stopped) {
-        Ok(state) => state,
+    // raw 观察用独立连接：主动抓取的持有者收不到本设备 raw 事件。
+    let raw_dpy = match super::open_display(&xlib) {
+        Ok(raw_dpy) => raw_dpy,
         Err(error) => {
             // SAFETY: 连接尚未交给其他线程，且没有其他所有者。
             unsafe { (xlib.XCloseDisplay)(dpy) };
             return Err(error);
         }
     };
+    let state = match build_state(Arc::clone(&xlib), xi, dpy, raw_dpy, reader, startup) {
+        Ok(state) => state,
+        Err(error) => {
+            // SAFETY: 两个连接尚未交给其他线程，且没有其他所有者。
+            unsafe {
+                (xlib.XCloseDisplay)(raw_dpy);
+                (xlib.XCloseDisplay)(dpy);
+            }
+            return Err(error);
+        }
+    };
     let wake: Wake = Arc::new(move || {
         let _ = (&writer).write(&[1]);
     });
-    capture_loop::install(owner, wake);
-    // 本波只有观察，没有抓取；如实上报「未接管本机输入」。
-    capture_loop::capture_available(false);
+    capture_loop::install(owner, Arc::clone(&wake));
+    state.watch(&wake);
+    // 抓取/热键/暂停/锁屏路径已在本波实现，才如实上报「已接管本机输入」。
+    capture_loop::capture_available(true);
     Ok(state)
+}
+
+impl LoopState {
+    fn watch(&self, wake: &Wake) {
+        self.safety.watch(wake);
+    }
 }
 
 fn build_state(
     xlib: Arc<Xlib>,
-    xi: XInput2,
+    xi: Arc<x11_dl::xinput2::XInput2>,
     dpy: *mut Display,
-    mode: Arc<Mutex<CaptureMode>>,
+    raw_dpy: *mut Display,
     reader: UnixStream,
-    stopped: Arc<AtomicBool>,
+    startup: Startup,
 ) -> Result<LoopState, InputError> {
+    let Startup {
+        mode,
+        stopped,
+        safety,
+        locked,
+        commands,
+    } = startup;
     devices::negotiate(&xi, dpy)?;
+    devices::negotiate(&xi, raw_dpy)?;
     let opcode = extension_opcode(&xlib, dpy)?;
     let mut supported = 0;
     // SAFETY: dpy 有效；supported 是有效 out 指针。返回 0 表示服务器不支持可检测重复。
     let detectable = unsafe { (xlib.XkbSetDetectableAutoRepeat)(dpy, 1, &mut supported) };
     let supported_repeat = detectable != 0;
     let devices = devices::query(&xi, dpy)?;
-    select_raw(&xlib, &xi, dpy)?;
+    let modmap = devices::ModifierMap::query(&xlib, dpy)?;
+    select_hierarchy(&xlib, &xi, dpy)?;
+    select_raw(&xlib, &xi, raw_dpy)?;
+    // SAFETY: raw_dpy 有效；同步确保 raw 选择在就绪信号前已被服务器处理。
+    unsafe { (xlib.XSync)(raw_dpy, 0) };
     let table = Arc::clone(&xlib);
     let sampler: Box<dyn event::Sampler> = Box::new(move || query_cursor(&table, dpy));
+    let modes = modes::Modes::new(Arc::clone(&xlib), xi, dpy, devices.clone(), modmap)?;
+    let translator = event::Translator::new(devices, mode.clone(), sampler);
     Ok(LoopState {
-        translator: event::Translator::new(devices, mode, sampler),
         xlib,
-        xi,
         dpy,
+        raw_dpy,
         opcode,
+        translator,
+        mode,
         stopped,
         reader,
         reader_buf: [0; 64],
         supported_repeat,
+        safety,
+        locked,
+        commands,
+        modes,
+        active: false,
+        next_sync: Instant::now(),
     })
-}
-
-fn extension_opcode(xlib: &Xlib, dpy: *mut Display) -> Result<i32, InputError> {
-    let name = std::ffi::CString::new("XInputExtension").map_err(|_| InputError::Platform("扩展名无效".into()))?;
-    let (mut opcode, mut first_event, mut first_error) = (0, 0, 0);
-    // SAFETY: dpy 有效；name 以 NUL 结尾；三个 out 指针有效。
-    let present =
-        unsafe { (xlib.XQueryExtension)(dpy, name.as_ptr(), &mut opcode, &mut first_event, &mut first_error) };
-    if present == 0 {
-        return Err(InputError::Unsupported);
-    }
-    Ok(opcode)
-}
-
-fn select_raw(xlib: &Xlib, xi: &XInput2, dpy: *mut Display) -> Result<(), InputError> {
-    let raw_kinds = [
-        XI_RawKeyPress,
-        XI_RawKeyRelease,
-        XI_RawButtonPress,
-        XI_RawButtonRelease,
-        XI_RawMotion,
-    ];
-    let mut raw_mask = [0_u8; 4];
-    for kind in raw_kinds {
-        raw_mask[kind as usize / 8] |= 1 << (kind as usize % 8);
-    }
-    // XI_HierarchyChanged 只能挂在 XIAllDevices 上；master 设备选择会得到 BadValue。
-    let mut hierarchy_mask = [0_u8; 4];
-    hierarchy_mask[XI_HierarchyChanged as usize / 8] |= 1 << (XI_HierarchyChanged as usize % 8);
-    let mut selections = [
-        XIEventMask {
-            deviceid: XIAllMasterDevices,
-            mask_len: raw_mask.len() as i32,
-            mask: raw_mask.as_mut_ptr(),
-        },
-        XIEventMask {
-            deviceid: XIAllDevices,
-            mask_len: hierarchy_mask.len() as i32,
-            mask: hierarchy_mask.as_mut_ptr(),
-        },
-    ];
-    // SAFETY: dpy 有效；root 来自同一连接；mask 在调用期间存活。
-    let root = unsafe { (xlib.XDefaultRootWindow)(dpy) };
-    // SAFETY: dpy 有效；selections 指向存活的掩码数组；root 来自同一连接。
-    let status = unsafe { (xi.XISelectEvents)(dpy, root, selections.as_mut_ptr(), selections.len() as i32) };
-    if status != 0 {
-        return Err(InputError::Platform(format!("XI2 选择 raw 事件失败（状态 {status}）")));
-    }
-    Ok(())
-}
-
-fn query_cursor(xlib: &Xlib, dpy: *mut Display) -> Option<Point> {
-    // SAFETY: dpy 有效且由截获线程独占。
-    let root = unsafe { (xlib.XDefaultRootWindow)(dpy) };
-    let (mut root_return, mut child_return) = (0, 0);
-    let (mut root_x, mut root_y, mut win_x, mut win_y) = (0, 0, 0, 0);
-    let mut mask = 0;
-    // SAFETY: 所有 out 指针都是有效栈变量；root 来自同一连接。
-    let ok = unsafe {
-        (xlib.XQueryPointer)(
-            dpy,
-            root,
-            &mut root_return,
-            &mut child_return,
-            &mut root_x,
-            &mut root_y,
-            &mut win_x,
-            &mut win_y,
-            &mut mask,
-        )
-    };
-    (ok != 0).then_some(Point::new(f64::from(root_x), f64::from(root_y)))
 }
 
 impl LoopState {
@@ -277,80 +322,92 @@ impl LoopState {
             if self.stopped.load(Ordering::SeqCst) {
                 break;
             }
-            while self.pending() > 0 {
-                self.dispatch();
+            self.drain_commands();
+            self.sync_state(Instant::now());
+            while self.pending(self.dpy) > 0 {
+                self.dispatch(self.dpy);
+            }
+            while self.pending(self.raw_dpy) > 0 {
+                self.dispatch(self.raw_dpy);
             }
             let now = Instant::now();
-            for event in self.translator.flush_motion(now) {
-                let _ = capture_loop::event(&event);
+            if self.active {
+                for event in self.translator.flush_motion(now) {
+                    let _ = capture_loop::event(&event);
+                }
+            } else {
+                self.translator.discard_motion();
             }
             let (deadline, stopped) = capture_loop::poll(now);
             if stopped || self.stopped.load(Ordering::SeqCst) {
                 break;
             }
-            self.wait(deadline);
+            let wake_at = Some(match deadline {
+                Some(deadline) => deadline.min(self.next_sync),
+                None => self.next_sync,
+            });
+            self.wait(wake_at);
+        }
+        // 线程退出前如实撤销能力声明；清理由 Drop 完成。
+        capture_loop::capture_available(false);
+    }
+
+    fn drain_commands(&mut self) {
+        while let Ok(command) = self.commands.try_recv() {
+            match command {
+                Command::Restore { at, complete } => {
+                    if let Ok(mut mode) = self.mode.lock() {
+                        *mode = CaptureMode::Local;
+                    }
+                    let restored = self.modes.force_local(at, &mut self.translator);
+                    complete(restored);
+                }
+            }
         }
     }
 
-    fn pending(&self) -> i32 {
+    /// 把抓取/遮罩对齐到当前安全状态。未知锁定一律按锁定处理。
+    fn sync_state(&mut self, now: Instant) {
+        let safety = self.safety.snapshot();
+        let lock_known_unlocked = self.locked.load(Ordering::Relaxed) == 0;
+        let desired_mode = self.mode.lock().map(|mode| *mode).unwrap_or(CaptureMode::Local);
+        let paused = !safety.active();
+        let allowed = safety.active() && lock_known_unlocked && capture_loop::capture_requested();
+        let desired_remote = matches!(desired_mode, CaptureMode::Remote { .. });
+        let was_active = self.active;
+        if was_active && (!allowed || (desired_remote && !self.modes.remote())) {
+            self.translator.rebase_cursor();
+        }
+        let park = match desired_mode {
+            CaptureMode::Remote { park } => park,
+            CaptureMode::Local => Point::new(0.0, 0.0),
+        };
+        let (resume, hotkeys, guard) = if paused {
+            (capture_loop::paused_hotkey(), Vec::new(), false)
+        } else if allowed {
+            (None, capture_loop::hotkeys(), capture_loop::keyboard_key_blocked(None))
+        } else {
+            (None, Vec::new(), false)
+        };
+        let context = modes::Context {
+            active: allowed,
+            paused,
+            resume_allowed: lock_known_unlocked,
+            desired_remote,
+            park,
+            resume,
+            hotkeys,
+            guard,
+        };
+        self.modes.apply(&context, &mut self.translator, now);
+        // 主动抓取尚未成功时不路由本机事件，避免本地与远端同时收到同一输入。
+        self.active = allowed && (!desired_remote || self.modes.remote());
+        self.next_sync = now + GATE_INTERVAL;
+    }
+
+    fn pending(&self, dpy: *mut Display) -> i32 {
         // SAFETY: dpy 由本线程独占。
-        unsafe { (self.xlib.XPending)(self.dpy) }
-    }
-
-    #[allow(non_upper_case_globals)]
-    fn dispatch(&mut self) {
-        // SAFETY: XEvent 是可零初始化的 C union 存储，XNextEvent 会写满。
-        let mut event: XEvent = unsafe { std::mem::zeroed() };
-        // SAFETY: dpy 有效；event 是足够大的 XEvent 存储；只有 XPending>0 才调用。
-        unsafe { (self.xlib.XNextEvent)(self.dpy, &mut event) };
-        // SAFETY: type_ 是 union 的公共首字段。
-        if unsafe { event.type_ } != GenericEvent {
-            return;
-        }
-        // SAFETY: 上面已确认 type_ == GenericEvent，cookie 字段有效。
-        let cookie = unsafe { &mut event.generic_event_cookie };
-        if cookie.extension != self.opcode {
-            return;
-        }
-        // SAFETY: cookie 来自 XNextEvent；成功后 data 指向扩展事件结构。
-        if unsafe { (self.xlib.XGetEventData)(self.dpy, cookie) } == 0 {
-            return;
-        }
-        let now = Instant::now();
-        match cookie.evtype {
-            XI_RawKeyPress | XI_RawKeyRelease => {
-                // SAFETY: XI2 raw 事件的 data 指向 XIRawEvent。
-                let raw = unsafe { &*(cookie.data as *const XIRawEvent) };
-                if let Some(event) = self.translator.key(now, raw) {
-                    let _ = capture_loop::event(&event);
-                }
-            }
-            XI_RawButtonPress | XI_RawButtonRelease => {
-                // SAFETY: 同上。
-                let raw = unsafe { &*(cookie.data as *const XIRawEvent) };
-                if let Some(event) = self.translator.button(now, raw) {
-                    let _ = capture_loop::event(&event);
-                }
-            }
-            XI_RawMotion => {
-                // SAFETY: 同上。
-                let raw = unsafe { &*(cookie.data as *const XIRawEvent) };
-                if let Some(event) = self.translator.motion(now, raw) {
-                    let _ = capture_loop::event(&event);
-                }
-            }
-            XI_HierarchyChanged => {
-                // SAFETY: hierarchy 事件的 data 指向 XIHierarchyEvent。
-                let change = unsafe { &*(cookie.data as *const XIHierarchyEvent) };
-                tracing::info!(flags = change.flags, "XI2 设备层级变化，重新枚举");
-                if let Ok(devices) = devices::query(&self.xi, self.dpy) {
-                    self.translator.replace_devices(devices);
-                }
-            }
-            _ => {}
-        }
-        // SAFETY: 与 XGetEventData 成对释放同一 cookie。
-        unsafe { (self.xlib.XFreeEventData)(self.dpy, cookie) };
+        unsafe { (self.xlib.XPending)(dpy) }
     }
 
     fn wait(&mut self, deadline: Option<Instant>) {
@@ -366,14 +423,20 @@ impl LoopState {
                 revents: 0,
             },
             libc::pollfd {
+                // SAFETY: raw_dpy 有效且由本线程独占。
+                fd: unsafe { (self.xlib.XConnectionNumber)(self.raw_dpy) },
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
                 fd: self.reader.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
             },
         ];
-        // SAFETY: fds 指向两个有效 pollfd；-1 表示等待任一 fd 就绪。
+        // SAFETY: fds 指向三个有效 pollfd；-1 表示等待任一 fd 就绪。
         unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
-        if fds[1].revents & libc::POLLIN != 0 {
+        if fds[2].revents & libc::POLLIN != 0 {
             let _ = self.reader.read(&mut self.reader_buf);
         }
     }

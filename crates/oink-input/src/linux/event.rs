@@ -4,19 +4,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use oink_foundation::Point;
-use oink_foundation::input::{
-    CaptureMode, CapturedEvent, InputEvent, MouseButton, ScrollPhase, ScrollUnit, SourceKind,
-};
+use oink_foundation::input::{CaptureMode, CapturedEvent, InputEvent, ScrollPhase, ScrollUnit, SourceKind};
+use values::{valuator, wheel_delta, wrap_delta, x_button};
 use x11_dl::xinput2::{
-    XI_RawButtonPress, XI_RawButtonRelease, XI_RawKeyPress, XI_RawKeyRelease, XI_RawMotion, XIRawEvent,
+    XI_KeyPress, XI_KeyRelease, XI_RawButtonPress, XI_RawButtonRelease, XI_RawKeyPress, XI_RawKeyRelease, XI_RawMotion,
+    XIDeviceEvent, XIRawEvent,
 };
 
 use super::devices::Devices;
 use super::keymap;
 
-/// 滚动 valuator 是双精度累加器；跨过半个回绕周期视为回绕，不当作真实跳变。
-const WRAP: f64 = 4_294_967_296.0;
-const HALF_WRAP: f64 = 2_147_483_648.0;
+mod values;
 
 /// 仅运行测试：Xephyr 里唯一可造的输入是 XTEST，允许它在端到端探针中穿过来源过滤。
 /// 生产构建（非 cfg(test)）绝不含这条分支。
@@ -84,7 +82,7 @@ impl Translator {
         now.saturating_duration_since(self.epoch).as_micros() as u64
     }
 
-    fn synthetic(&self, sourceid: i32) -> bool {
+    pub(super) fn synthetic(&self, sourceid: i32) -> bool {
         #[cfg(test)]
         if ACCEPT_XTEST.load(std::sync::atomic::Ordering::Relaxed) {
             return sourceid <= 0;
@@ -152,6 +150,46 @@ impl Translator {
             time_us: self.time_us(now),
             cursor,
         })
+    }
+
+    /// 被动抓取送来的 cooked 键事件 → `CapturedEvent`。raw 事件已被抑制，
+    /// 这条路径是该按键码唯一的本地路由来源。
+    #[allow(non_upper_case_globals)]
+    pub(super) fn grabbed_key(&self, now: Instant, event: &XIDeviceEvent) -> Option<CapturedEvent> {
+        let pressed = match event.evtype {
+            XI_KeyPress => true,
+            XI_KeyRelease => false,
+            _ => return None,
+        };
+        let code = keymap::hid_usage(event.detail as u32)?;
+        Some(CapturedEvent {
+            physical: true,
+            event: InputEvent::Key { code, pressed },
+            source: SourceKind::Keyboard,
+            time_us: self.time_us(now),
+            cursor: None,
+        })
+    }
+
+    /// 停靠/恢复/停靠点跳跃之后重设位移基线，避免把 warp 或注入位移算进
+    /// 下一次物理移动。
+    pub(super) fn reset_cursor(&mut self, at: Option<Point>) {
+        self.cursor = at;
+        self.device_position = None;
+        self.pending = RawMotion::default();
+    }
+
+    /// 用当前采样位置重建基线；采样失败时退回 `None`（下一次 flush 不产生位移）。
+    pub(super) fn rebase_cursor(&mut self) {
+        let sampled = self.sampler.cursor();
+        self.reset_cursor(sampled);
+        self.scroll = [None, None];
+    }
+
+    /// 暂停/锁屏期间丢弃尚未上报的 raw motion。
+    pub(super) fn discard_motion(&mut self) {
+        self.pending = RawMotion::default();
+        self.device_position = None;
     }
 
     /// 记录 raw motion 并更新滚动状态；位置差与 raw 增量在 `flush_motion` 一次产生，
@@ -266,62 +304,6 @@ impl Translator {
     }
 }
 
-fn x_button(detail: u32) -> Option<MouseButton> {
-    Some(match detail {
-        1 => MouseButton::Left,
-        2 => MouseButton::Middle,
-        3 => MouseButton::Right,
-        8 => MouseButton::Back,
-        9 => MouseButton::Forward,
-        _ => MouseButton::Other(u8::try_from(detail.saturating_sub(1)).ok()?),
-    })
-}
-
-/// 滚轮按钮 → foundation 滚动方向（4 = 上，5 = 下，6 = 左，7 = 右）。
-fn wheel_delta(detail: u32) -> Option<(f64, f64)> {
-    Some(match detail {
-        4 => (0.0, 1.0),
-        5 => (0.0, -1.0),
-        6 => (1.0, 0.0),
-        7 => (-1.0, 0.0),
-        _ => return None,
-    })
-}
-
-fn wrap_delta(value: f64, previous: f64) -> f64 {
-    let delta = value - previous;
-    if delta > HALF_WRAP {
-        delta - WRAP
-    } else if delta < -HALF_WRAP {
-        delta + WRAP
-    } else {
-        delta
-    }
-}
-
-/// 按 valuator 编号读取 raw 事件值。mask 的每一位对应一个 valuator 编号，
-/// 值按编号升序排列。
-fn valuator(raw: &XIRawEvent, number: usize) -> Option<f64> {
-    let state = &raw.valuators;
-    if state.mask_len <= 0 || state.mask.is_null() || state.values.is_null() {
-        return None;
-    }
-    let mut index = 0;
-    for current in 0..state.mask_len as usize * 8 {
-        // SAFETY: mask_len 字节由服务器提供；values 至少有同等数量的已设定位。
-        let set = unsafe { *state.mask.add(current / 8) } & (1 << (current % 8)) != 0;
-        if !set {
-            continue;
-        }
-        if current == number {
-            // SAFETY: index 只在已设定位上递增，不会超出 values 的长度。
-            return Some(unsafe { *state.values.add(index) });
-        }
-        index += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,33 +335,6 @@ mod tests {
             },
             raw_values: std::ptr::null_mut(),
         }
-    }
-
-    #[test]
-    fn valuator_reads_by_number_through_the_mask() {
-        let mut mask = [0b0000_1101_u8];
-        let mut values = [10.0, 240.0, 30.0];
-        let event = raw(XI_RawMotion, 6, 0, &mut values, &mut mask);
-        assert_eq!(valuator(&event, 0), Some(10.0));
-        assert_eq!(valuator(&event, 2), Some(240.0));
-        assert_eq!(valuator(&event, 3), Some(30.0));
-        assert_eq!(valuator(&event, 1), None);
-    }
-
-    #[test]
-    fn wheel_buttons_map_to_foundation_directions() {
-        assert_eq!(wheel_delta(4), Some((0.0, 1.0)));
-        assert_eq!(wheel_delta(5), Some((0.0, -1.0)));
-        assert_eq!(wheel_delta(6), Some((1.0, 0.0)));
-        assert_eq!(wheel_delta(7), Some((-1.0, 0.0)));
-        assert_eq!(wheel_delta(1), None);
-    }
-
-    #[test]
-    fn scroll_wrap_is_not_a_huge_jump() {
-        assert_eq!(wrap_delta(10.0, 5.0), 5.0);
-        assert_eq!(wrap_delta(-WRAP / 2.0 + 60.0, WRAP / 2.0 - 60.0), 120.0);
-        assert_eq!(wrap_delta(WRAP / 2.0 - 60.0, -WRAP / 2.0 + 60.0), -120.0);
     }
 
     #[test]

@@ -226,7 +226,71 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::InputError;
+    use x11_dl::dpms::{DPMSModeOn, Xext};
+    use x11_dl::xlib::{Display, Xlib};
+
+    /// 独立连接上的 DPMS 只读观察，避免与截获/注入线程共享 Display。
+    pub(super) struct Monitor {
+        xlib: Xlib,
+        dpms: Xext,
+        dpy: *mut Display,
+    }
+
+    // SAFETY: 连接由 Monitor 独占，只在持有者的轮询线程上使用。
+    unsafe impl Send for Monitor {}
+
+    impl std::fmt::Debug for Monitor {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DpmsMonitor").finish_non_exhaustive()
+        }
+    }
+
+    impl Monitor {
+        pub(super) fn new() -> Result<Self, InputError> {
+            let xlib = Xlib::open().map_err(|e| InputError::Platform(format!("DPMS 加载 libX11 失败：{e}")))?;
+            let dpms = Xext::open().map_err(|e| InputError::Platform(format!("DPMS 加载 libXext 失败：{e}")))?;
+            // SAFETY: 无参数、进程内幂等；在打开本连接前初始化线程支持。
+            unsafe { (xlib.XInitThreads)() };
+            // SAFETY: NULL 让 Xlib 读取 DISPLAY；返回空指针表示连接失败。
+            let dpy = unsafe { (xlib.XOpenDisplay)(std::ptr::null()) };
+            if dpy.is_null() {
+                return Err(InputError::Platform("DPMS 无法连接 X 服务器".into()));
+            }
+            let (mut event_base, mut error_base) = (0, 0);
+            // SAFETY: dpy 有效；两个 out 指针有效。
+            let present = unsafe { (dpms.DPMSQueryExtension)(dpy, &mut event_base, &mut error_base) };
+            if present == 0 {
+                // SAFETY: 连接由本函数独占，还没有交给其他线程。
+                unsafe { (xlib.XCloseDisplay)(dpy) };
+                return Err(InputError::Unsupported);
+            }
+            Ok(Self { xlib, dpms, dpy })
+        }
+
+        pub(super) fn sample(&self) -> Option<bool> {
+            let mut level = 0_u16;
+            let mut enabled = 0_u8;
+            // SAFETY: dpy 有效；level/enabled 是正确类型的 out 指针。
+            let status = unsafe { (self.dpms.DPMSInfo)(self.dpy, &mut level, &mut enabled) };
+            if status == 0 {
+                return None;
+            }
+            Some(enabled != 0 && level != DPMSModeOn)
+        }
+    }
+
+    impl Drop for Monitor {
+        fn drop(&mut self) {
+            // SAFETY: 连接由本对象独占且只关闭一次。
+            unsafe { (self.xlib.XCloseDisplay)(self.dpy) };
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod platform {
     use super::InputError;
     #[derive(Debug)]

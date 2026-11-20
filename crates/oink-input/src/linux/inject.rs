@@ -231,6 +231,8 @@ mod tests {
             scroll: Mutex::new((0.0, 0.0)),
             ledger: Mutex::new(Ledger::default()),
             capture: Mutex::new(None),
+            safety: Arc::new(crate::session_gate::SessionGate::default()),
+            locked: Arc::new(std::sync::atomic::AtomicI8::new(0)),
         })
     }
 

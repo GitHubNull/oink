@@ -161,7 +161,6 @@ pub(crate) fn poll(now: Instant) -> (Option<Instant>, bool) {
 }
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn capture_requested() -> bool {
     OWNER.with(|slot| {
         slot.borrow()
@@ -172,12 +171,10 @@ pub(crate) fn capture_requested() -> bool {
 }
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn paused_hotkey() -> Option<ResumeHotkey> {
     OWNER.with(|slot| slot.borrow().as_ref().and_then(|owner| owner.paused_hotkey()))
 }
 #[cfg(target_os = "linux")]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn hotkeys() -> Vec<KeyChord> {
     // A native callback nested in the busy owner must not borrow it again.
     OWNER.with(|slot| {
@@ -188,7 +185,6 @@ pub(crate) fn hotkeys() -> Vec<KeyChord> {
     })
 }
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn resume_hotkey() {
     OWNER.with(|slot| {
         if let Some(owner) = slot.borrow_mut().as_mut() {
@@ -263,7 +259,6 @@ pub(crate) fn keyboard_guard_suspended() -> bool {
 }
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn keyboard_key_blocked(code: Option<crate::KeyCode>) -> bool {
     OWNER.with(|slot| {
         slot.borrow()

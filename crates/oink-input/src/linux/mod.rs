@@ -4,6 +4,7 @@
 //! XRecord/XGrabKeyboard，所以 `capture_available()` 如实上报未接管，由路由层
 //! 发布故障码，而不是伪造「已截获」。注入只作用于本进程连接的那个 X server。
 
+use std::sync::atomic::{AtomicI8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oink_foundation::Point;
@@ -12,7 +13,8 @@ use x11_dl::xinput2::XInput2;
 use x11_dl::xlib::{Display, Xlib};
 use x11_dl::xtest::Xf86vmode as Xtst;
 
-use crate::{EventHandler, FeelProfile, InputBackend, InputError, InputPermissions};
+use crate::session_gate::SessionGate;
+use crate::{EventHandler, FeelProfile, InputBackend, InputError, InputPermissions, SessionLockObservation};
 
 mod capture;
 mod cursor;
@@ -24,6 +26,15 @@ mod keymap;
 mod session;
 
 pub(crate) fn backend() -> Result<Box<dyn InputBackend>, InputError> {
+    Ok(Box::new(make_backend()?))
+}
+
+#[cfg(test)]
+pub(super) fn test_backend() -> Result<X11Input, InputError> {
+    make_backend()
+}
+
+fn make_backend() -> Result<X11Input, InputError> {
     let xlib = Xlib::open().map_err(|e| InputError::Platform(format!("加载 libX11 失败：{e}")))?;
     let xtest = Xtst::open().map_err(|e| InputError::Platform(format!("加载 libXtst 失败：{e}")))?;
     // 全局初始化必须先于其他 X 调用：显示器枚举与截获/注入线程各持独立连接。
@@ -44,7 +55,7 @@ pub(crate) fn backend() -> Result<Box<dyn InputBackend>, InputError> {
         unsafe { (xlib.XCloseDisplay)(dpy) };
         return Err(error);
     }
-    Ok(Box::new(X11Input {
+    Ok(X11Input {
         xlib,
         xtest,
         conn: Mutex::new(Conn { dpy }),
@@ -52,7 +63,9 @@ pub(crate) fn backend() -> Result<Box<dyn InputBackend>, InputError> {
         scroll: Mutex::new((0.0, 0.0)),
         ledger: Mutex::new(inject::Ledger::default()),
         capture: Mutex::new(None),
-    }))
+        safety: Arc::new(SessionGate::default()),
+        locked: Arc::new(AtomicI8::new(-1)),
+    })
 }
 
 /// 版本与请求都能协商才算可用；失败按 Unsupported 如实上报。
@@ -97,6 +110,9 @@ pub(super) struct X11Input {
     pub(super) scroll: Mutex<(f64, f64)>,
     pub(super) ledger: Mutex<inject::Ledger>,
     pub(super) capture: Mutex<Option<capture::CaptureThread>>,
+    pub(super) safety: Arc<SessionGate>,
+    /// -1 未知、0 解锁、1 锁定；未知绝不当作解锁。
+    pub(super) locked: Arc<AtomicI8>,
 }
 
 impl std::fmt::Debug for X11Input {
@@ -153,19 +169,96 @@ impl X11Input {
             Ok((root_x, root_y))
         })?
     }
+
+    /// 查询会话锁定并刷新截获线程的缓存；未知（None）保持“不一定解锁”。
+    pub(super) fn observe_lock(&self) -> Option<bool> {
+        let state = session::bus_locked().or_else(|| {
+            self.with_dpy(|dpy| session::screensaver(&self.xlib, dpy))
+                .ok()
+                .flatten()
+        });
+        self.store_lock(state);
+        state
+    }
+
+    fn store_lock(&self, state: Option<bool>) {
+        let value = match state {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => -1,
+        };
+        if self.locked.swap(value, Ordering::Relaxed) != value {
+            self.wake_capture();
+        }
+    }
+
+    /// 测试入口：直接设置锁屏缓存并唤醒截获线程。
+    #[cfg(test)]
+    pub(super) fn force_lock_state(&self, state: Option<bool>) {
+        self.store_lock(state);
+    }
+
+    /// 通知截获线程复核状态；不持有截获运行锁。
+    pub(super) fn wake_capture(&self) {
+        if let Ok(slot) = self.capture.lock()
+            && let Some(thread) = slot.as_ref()
+        {
+            thread.notify();
+        }
+    }
 }
 
 impl InputBackend for X11Input {
     fn start(&self, handler: EventHandler) -> Result<(), InputError> {
+        // 先在普通线程完成一次 D-Bus/Xss 查询，截获线程只读缓存。
+        let _ = self.observe_lock();
         capture::start_callback(self, handler)
     }
 
     fn start_loop(&self, owner: Box<dyn crate::capture_loop::CaptureLoop>) -> Result<(), InputError> {
+        let _ = self.observe_lock();
         capture::start_loop(self, owner)
     }
 
     fn stop(&self) {
         capture::stop(self);
+    }
+
+    fn input_safety(&self) -> crate::session_gate::InputSafety {
+        self.safety.snapshot()
+    }
+
+    fn watch_input_safety(&self, wake: &crate::capture_loop::Wake) {
+        self.safety.watch(wake);
+    }
+
+    fn set_input_paused(&self, paused: bool) {
+        self.safety.set_paused(paused);
+        if paused {
+            // 暂停期间不留下本应用按下的键/按钮。
+            inject::release_all(self);
+        }
+        self.wake_capture();
+    }
+
+    fn session_locked(&self) -> Option<bool> {
+        self.observe_lock()
+    }
+
+    fn session_lock_observation(&self) -> SessionLockObservation {
+        SessionLockObservation {
+            state: self.observe_lock(),
+            error_code: None,
+        }
+    }
+
+    fn reset_user_idle(&self) -> Result<bool, InputError> {
+        self.with_dpy(|dpy| session::reset_idle(&self.xlib, dpy))??;
+        Ok(true)
+    }
+
+    fn declare_user_activity(&self) -> Result<bool, InputError> {
+        self.reset_user_idle()
     }
 
     fn start_injection_session(&self) -> Result<(), InputError> {
@@ -182,11 +275,30 @@ impl InputBackend for X11Input {
     }
 
     fn set_mode(&self, mode: CaptureMode) -> Result<(), InputError> {
-        // W2 仍不 grab、不隐藏光标：记录模式供事件翻译使用，能力由 capture_available(false) 上报。
-        *self
+        let mut current = self
             .mode
             .lock()
-            .map_err(|_| InputError::Platform("模式锁已损坏".into()))? = mode;
+            .map_err(|_| InputError::Platform("模式锁已损坏".into()))?;
+        if *current == mode {
+            return Ok(());
+        }
+        *current = mode;
+        drop(current);
+        self.wake_capture();
+        Ok(())
+    }
+
+    /// 抓取顺序与光标显示由截获线程执行；完成回调只在 XSync 后重读核验通过时给 true。
+    fn restore_local_with_completion(
+        &self,
+        at: Point,
+        complete: Box<dyn FnOnce(bool) + Send>,
+    ) -> Result<(), InputError> {
+        capture::restore_local(self, at, complete)
+    }
+
+    /// raw 事件始终观察，Remote 的位移直接来自设备原始增量；无需切换抓取模式。
+    fn set_relative_capture(&self, _enabled: bool) -> Result<(), InputError> {
         Ok(())
     }
 
