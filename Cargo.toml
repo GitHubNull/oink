@@ -65,6 +65,10 @@ todo = "warn"
 unimplemented = "warn"
 undocumented_unsafe_blocks = "warn"
 
+[profile.dev]
+incremental = false
+debug = 1
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

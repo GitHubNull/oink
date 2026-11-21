@@ -424,3 +424,45 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - `cargo fmt --all -- --check` 通过；clippy rc=0；全量测试为 29 条登记基线；前端 typecheck/test/build 绿；离线 `discover -p 'test_linux*.py'` 289 项 OK；托盘探针 18/18（中英各一轮）、W2/W3 回归全绿。
 - 证据根：`.release-tools/linux-probes/phase3-gate-20261120/`（`baseline-*`、`w1`、`w2`、`w3`、`w4`、`w6`；最终门禁与探针复跑在 `w7/`）。
 - 交接：`doc/handover/2026-11-21-linux-x11-phase3-closure.md`。
+
+## 阶段 4 实施记录（2026-11-21）
+
+### 波次与代码（W1–W5，本地提交，未推送）
+
+- W1 `f5b78e5`：阶段 4 骨架。`crates/oink-input/src/linux.rs`（561 行）拆为 `linux/{mod,capture,inject,keymap,devices,event,hotkeys,cursor,session}.rs`；`crates/oink-display/src/linux.rs` 拆为 `linux/{mod,enumerate,arrangement,wallpaper}.rs`；新增 `crates/oink-locator/src/x11/{mod,shm,shape,probe}.rs` 与 Linux 后端骨架；新增隔离探针 `linux_phase4_input_probe.c`、`linux_phase4_overlay_probe.c`、`linux_phase4_wallpaper_probe.py` 并纳入 500 行门禁名单。29 文件 +2991/−762。
+- W2 `08750ea`：真实 XI2 观察线程。`linux/capture.rs` 建线程/wake/poll，`event.rs` 翻译键/按钮/移动/滚动 valuator，`devices.rs` 热插拔重枚举，`inject.rs` 注入台账，`sourceid` 过滤自身注入。9 文件 +1461/−121。
+- W3 `7a3a18a`：抓取与生命周期。`capture/modes.rs` 同步被动/主动抓取、回放/吞掉、`AlreadyGrabbed` 恢复；`hotkeys.rs` 注册/锁定位展开/暂停仅保留恢复组合；`session.rs` logind → Cinnamon → XScreenSaver 锁屏观察（未知≠解锁）；`cursor.rs` 隐藏/遮罩/停靠恢复；`display_power.rs` 观察并接入 `capture_loop.rs` 的 epoch 门。新增 `build-support/fake_logind_service.py`。18 文件 +2225/−337。
+- W4 `da2edc3`：`linux/arrangement.rs` 排列事务（快照、陈旧版本拒绝、无操作快速返回、失败回滚并重读回报）；`linux/wallpaper.rs` Cinnamon 壁纸读取/缩略图/变化观察，GSettings keyfile 安全路径。5 文件 +1116/−8。
+- W5 `831d929`：`oink-locator` Linux 后端。`linux.rs` 平台装配，`projection/linux.rs`、`notification/linux.rs`、`text_linux.rs`（Pango/Cairo 中文与 DPI），`x11/{shm,shape}.rs` 修复 `XShmSegmentInfo` 需 Box 固定的问题；depth-32 ARGB、override-redirect、XFixes 输入 shape、Expose 重绘、通知点击与 Cinnamon 动效开关。13 文件 +1263/−41。
+- 新增/拆分文件均 ≤500 行（最大 `linux/capture.rs` 446、`x11/mod.rs` 438、`wallpaper.rs` 424）。
+
+### W6 门禁（当前树，HEAD `831d929` + W6 工作区）
+
+- `cargo fmt --all -- --check` rc=0；`cargo clippy --locked --workspace --all-targets -- -D warnings` rc=0（1m56s，含新负载示例，零告警）；`cargo check --locked --workspace --release` rc=0（2m07s，零告警）。
+- `cargo test --locked --workspace --no-fail-fast` rc=101：111 target，2110 passed / 19 failed / 48 ignored；19 条全部落在阶段 3 登记的 29 条基线内，本轮新增 0；另有 10 条基线本次未复现，属波动，不声称已修复。失败名单 `gates/failed-names.txt`。
+- 前端 `npm run typecheck && npm test && npm run build` 全绿（105 文件 / 1536 测试）；离线 `discover -p 'test_linux*.py'` 289 项 OK。
+- 产物重建：`target/debug/oink`（custom-protocol）、`oink-agent`/`oink-backend`、`examples/phase4_overlay_load`，时间戳均晚于前端 `dist`。
+
+### 原生探针（串行、私有 Xephyr、限额 4 GiB / CPU 200% / TasksMax 1024）
+
+- 输入语义 9/9（`input-probe.log`）；红证据 `input-probe-red1.log` 保留：`passive_grab_replay` 失败时 WM 焦点仍在 1152 窗口、目标窗口 4194305 未获焦，复跑焦点正确后重放交付 1/1。判定为探针环境焦点竞态（该 C 探针验证 XI2 服务器语义，不经过产品代码）。
+- 遮罩语义 14/14（`overlay-probe-w6.log`）；壁纸 14/14（`wallpaper-probe-w6.log`、`wallpaper-w6/`）。
+- 阶段 3 回归：W2 10/10、W3 14/14、壳探针起窗存活、托盘中文轮 18/18（面板 360×520，菜单中文完整）。日志在 `regression/`。
+
+### 混合负载（真实 UI/后端 + 叠层驱动，同一私有 Xephyr）
+
+- 新增 `build-support/linux_phase4_load.py`（≤500 行，纳入门禁名单）与 `crates/oink-locator/examples/phase4_overlay_load.rs`（拖尾/投影/通知混合、每 10s 采样 RSS/CPU/FD/线程/窗口数/Shift 状态、每 60s 状态轮询与 XRandR 签名、暂停周期、通知与 root 输入）。红冒烟 `load-smoke-red1.log` 保留：驱动把 CPU tick 存成 int，第二轮采样 `'int' object is not subscriptable`；修复后 3 分钟冒烟 14/14（峰值 RSS ui_backend 337828 KiB、overlay 58924 KiB）。
+- 30 分钟完整负载（1800s，暂停每 300s）：14/14 检查通过（`load.log`、`load/summary.json`）。180 次采样；峰值 RSS ui_backend 406588 KiB、overlay 97916 KiB（合计约 492 MiB，低于 3 GiB 上限）；`status` 轮询 30 次、通知 15 次、暂停周期 6 次、输入轮 96 次、root 按钮事件 186 次；结束时 Shift 未卡住、XRandR 签名稳定、窗口回收（8→8）、无残留进程/僵尸，叠层驱动 exit 0。
+- 证据根 `.release-tools/linux-probes/phase4-gate-2026-11-21/`（gitignored）；功能矩阵 `matrix.md` 按“隔离通过/待验收/BLOCKED”分层，真实会话验收清单 `real-session-checklist.md`。
+
+### 已知限制与边界
+
+- Xephyr 无合成器：真实 Cinnamon 下的观感、阴影、动画与多屏拖尾未由代理验收，须用户执行清单。
+- 本机无多屏硬件：排列/镜像/旋转/负坐标的隔离证据仅单屏 no-op，真实多屏待验收；触摸/手势沿用 F4 BLOCKED 登记。
+- 无双机 peer：Remote 输入/显示反馈真实链路需 Windows 测试机配合。
+- 文件/音频/麦克风负载不属阶段 4，未覆盖；F5/F6 登记保持原样。
+- 负载点击仅落在 UI 之外的 root 边角，按键仅 Shift 按下/抬起；不向 `DISPLAY=:0` 注入、不抓真实键盘。
+
+### 交接
+
+阶段 5（完整剪贴板、文件与跨机拖放）交接文档：[2026-11-21-linux-x11-phase5-handoff.md](../handover/2026-11-21-linux-x11-phase5-handoff.md)。

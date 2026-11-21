@@ -24,7 +24,7 @@
 
 ## 索引
 
-当前续作入口：[第八轮：阶段 4 续作（输入/显示/原生可视反馈）](2026-11-21-linux-x11-phase4-continuation.md)。前七轮保持历史快照；本机依赖已由 A2 入口在新树 `.tools/fresh-20261117` 获取。
+当前续作入口：[第九轮：阶段 5 交接（完整剪贴板、文件与跨机拖放）](2026-11-21-linux-x11-phase5-handoff.md)。阶段 4 已完成并本地提交（未推送），真实会话验收清单待用户执行；前八轮保持历史快照。
 
 | 日期 | 范围 | 文档 | 状态 |
 |---|---|---|---|
@@ -35,7 +35,8 @@
 | 2026-11-20 | Linux X11 阶段 2 收口状态与后续开发（第五轮） | [2026-11-20-linux-x11-phase2-closure-handoff.md](2026-11-20-linux-x11-phase2-closure-handoff.md) | 历史快照：除触摸类外全部收口；阶段 2 门槛随后按用户书面例外关闭（见 plan.md），阶段 3 实施中 |
 | 2026-11-21 | Linux X11 阶段 3 W1–W3 完成与 W4 待办（第六轮） | [2026-11-21-linux-x11-phase3-w3-handoff.md](2026-11-21-linux-x11-phase3-w3-handoff.md) | 历史快照：W0–W3 完成并推送（72e22a2）；W4 随后完成 |
 | 2026-11-21 | Linux X11 阶段 3 收口（第七轮） | [2026-11-21-linux-x11-phase3-closure.md](2026-11-21-linux-x11-phase3-closure.md) | 历史快照：阶段 3 完成；C4 `9de8223` 与验收记录 `a2ab43c` 已推送，真实会话托盘已由用户确认 |
-| 2026-11-21 | Linux X11 阶段 4 续作（第八轮） | [2026-11-21-linux-x11-phase4-continuation.md](2026-11-21-linux-x11-phase4-continuation.md) | 阶段 4 未开始：输入完整语义、显示事务/壁纸、原生可视反馈待实施 |
+| 2026-11-21 | Linux X11 阶段 4 续作（第八轮） | [2026-11-21-linux-x11-phase4-continuation.md](2026-11-21-linux-x11-phase4-continuation.md) | 历史快照：阶段 4 当时未开始；W1–W5 随后完成并本地提交 |
+| 2026-11-21 | Linux X11 阶段 5 交接（第九轮） | [2026-11-21-linux-x11-phase5-handoff.md](2026-11-21-linux-x11-phase5-handoff.md) | 阶段 5 未开始：剪贴板/文件/DnD/FUSE 待实施；阶段 4 待真实会话验收 |
 
 ## 长期计划
 
