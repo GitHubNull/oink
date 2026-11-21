@@ -467,3 +467,44 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 ### 交接
 
 阶段 5（完整剪贴板、文件与跨机拖放）交接文档：[2026-11-21-linux-x11-phase5-handoff.md](../handover/2026-11-21-linux-x11-phase5-handoff.md)。
+
+## 阶段 5 实施记录（2026-11-21 ～ 2026-11-22）
+
+### 波次与代码（W1–W6，本地提交，未推送）
+
+- W1 `b406a2d`：Linux 剪贴板平台模型。`NativeFormat::LinuxAtom`、原子格式表与 `linux_custom` denylist（`formats.rs`/`atoms.rs` 基础）；agent 原生目标选择跟随宿主平台（`clip.rs` linux→Linux）；测试夹具 `FakeClipboard` 与场景平台臂补齐 Linux 编码/解码。12 文件 +242/−10。
+- W2 `9039360`：X11 剪贴板核心。`linux/{selection,serve,watch,x11,sys}.rs` 取得/放弃 CLIPBOARD 所有权，TARGETS/TIMESTAMP/INCR 原始 ICCCM 服务与延迟提供，XFixes 变化观察，自写防回环（marker + change_count），owner 退出清理；多格式绑定（`binding.rs`）。新增 `linux_phase5_selection_peer.c`、`phase5_clipboard_probe.rs`、`linux_phase5_clipboard_scenarios.py` 并纳入 500 行门禁。19 文件 +3924/−13。
+- W3 `b9223f4`：文件剪贴板。`linux/{uris,virtual_files}.rs` 文件列表捕获/服务、隐私门控、延迟读、text/uri-list 协商；`FileProviderUnavailable` 门控。新增 `linux_phase5_files_peer.c`、`linux_phase5_files_scenarios.py`、`phase5_files_probe.rs`。9 文件 +1446/−29。
+- W4 `d10707a`：跨机 XDND。`linux/dnd/{mod,own,foreign,run,source,target,window}.rs` 接收与源端全方法接线，generation 隔离、取消、3 秒准备预算、原生完成确认。新增 `linux_phase5_dnd_scenarios.py`、`phase5_dnd_probe.rs`；报表线协议扩展（file_requests/file_reads/file_entries/file_bytes/file_bad），C/Python 字段序门禁。19 文件 +3199/−48。
+- W5 `b91b35b`：FUSE 桥。`linux/fuse/{mod,fs,mount,handles,links,cache,fake}.rs` 私有只读 FUSE3 挂载桥接 `Namespace`：根不递归、分页、版本/offset、受限缓存、句柄/lease、卸载清理，无 `allow_other`，路径/符号链接/逃逸/冲突检查。新增 `linux_phase5_fuse_scenarios.py`、`test_linux_fuse_scenarios.py`、`phase5_fuse_probe.rs`。17 文件 +2295/−35。
+- W6 `03dced9` + `88d6566`：夹具宿主平台修复（5 文件 +22/−2，消除 W1 引入的 watchdog 死锁类回归，全量套件 1136 passed/3 failed 全部落在基线）；Nemo 粘贴为文件 `paste_file/linux.rs`（Selection/None 两动作、打包态检测、5 单测）+ Linux CLI dispatch 接线（`apps/oink/src-tauri/src/main.rs` 门控）。3 文件 +209/−22。
+- 新增/拆分文件均 ≤500 行（500 行门禁套件保持 309 项绿）。
+
+### W7 门禁（HEAD `88d6566` + 文档工作区）
+
+- `cargo fmt --all -- --check` rc=0；`cargo clippy --locked --workspace --all-targets -- -D warnings` rc=0 零告警（bounded 4 GiB/CPU 200%/TasksMax 1024）。
+- `cargo test --locked --workspace --no-fail-fast` rc=101：77 target，3293 passed / 12 failed / 75 ignored；12 条全部落在阶段 3 登记的 29 条基线内，本轮新增 0。oink-agent lib 全量完成（1136 passed / 3 failed / 27 ignored，475s，0 watchdogs）。失败名单 `gates/failed-names.txt`。
+- 前端 typecheck rc=0（0 TS 错误）、vitest 105 文件 / 1536 测试、build rc=0；离线 `discover -p 'test_linux*.py'` 309 项 OK。
+- 产物：`target/debug/oink`（custom-protocol）、`oink-agent`/`oink-backend`、四个 phase-5 探针示例与 `phase4_overlay_load`；负载后重编 UI 二进制，时间戳 dist < binary。
+
+### 原生探针（串行、私有 Xephyr）
+
+- 剪贴板 11/11（`w2-clipboard.log`）、文件 8/8（`w3-files.log`）、DnD 8/8（`w4-dnd.log`）、FUSE 4/4（`w5-fuse.log`：self-check roots=8、mounted 摘要核对、stale/offline read-errors=3、remaining_mounts=0）。
+- DnD roles 二进制按当前源码重建（`bin/dnd-roles`，sha256 `c157533e...`）；11-17 旧批次（`213e26bb`）早于线协议扩展，不得混用。
+- 阶段 4 回归：输入 9/9（红证据 `input-probe.log` = 已知 WM 焦点竞态，绿跑 `input-probe-green.log`）、遮罩 14/14、壁纸 14/14；阶段 3 W2 10/10、W3 14/14、壳探针、托盘中文 18/18（首轮仅会话服务挂载未及时拆解，复跑绿）。
+
+### 混合负载
+
+- 30 分钟完整负载（1800s，暂停每 300s，复用 `linux_phase4_load.py` 作共跑背景）：14/14 检查通过，cleanup_ok=true、remaining_mounts=0（`load.log`、`load/summary.json`）。180 次采样；峰值 RSS ui_backend 365328 KiB、overlay 97620 KiB（合计约 452 MiB，低于 3 GiB 上限）；`status` 轮询 30 次、通知 15 次、暂停周期 6 次、输入轮 96 次、root 按钮事件 186 次；全程 Shift 未卡住、显示签名稳定、窗口 8→8 回收、无残留进程/僵尸，叠层驱动 exit 0。
+- 负载后重编 `target/debug/oink`（custom-protocol），时间戳晚于前端 dist。
+
+### 已知限制与边界
+
+- Xephyr 无合成器：真实 Cinnamon 观感与第三方应用互操作须用户执行清单；剪贴板/文件/Nemo/拖放真实验收项见 `real-session-checklist.md`。
+- F5（Chromium 源合成拖拽）/F6（Firefox 文件源）登记保持；触摸/手势 BLOCKED（F4）。
+- 双机 peer（Windows 测试机）真实链路未覆盖；浏览器沙箱拖拽待验收。
+- 不向 `DISPLAY=:0` 注入、不抓真实键盘；证据只记结构化状态/尺寸/计数/SHA-256。
+
+### 交接
+
+阶段 6（系统音频与虚拟麦克风）交接文档：[2026-11-22-linux-x11-phase6-handoff.md](../handover/2026-11-22-linux-x11-phase6-handoff.md)。
