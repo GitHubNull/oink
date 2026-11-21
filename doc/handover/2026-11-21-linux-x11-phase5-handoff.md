@@ -68,7 +68,7 @@ python3 -m unittest discover -s build-support -p 'test_linux*.py'    # 289 OK
 
 ## 6. 环境手册
 
-- 工作目录 `/home/wgh/dev/cross_platform_app/oink`；分支 `main`；版本 `0.3.5`；阶段 4 W1–W5 本地提交 `f5b78e5, 08750ea, 7a3a18a, da2edc3, 831d929`（未推送，W6 另有一笔本地提交）。
+- 工作目录 `/home/wgh/dev/cross_platform_app/oink`；分支 `main`；版本 `0.3.5`；阶段 4 W1–W5 本地提交 `f5b78e5, 08750ea, 7a3a18a, da2edc3, 831d929`，W6 为 `cf5a2fa`，其后仅文档补记提交（不改代码与门禁）；均未推送，`origin/main` 仍为阶段 3 之后的 `b5fc8e0`。
 - 工具链：Rust stable、Node v24.22.1/npm、Python 3（dbus-python 1.3.2、GLib）、`dbus-daemon`、Xephyr、metacity、xdotool/xwininfo/xprop/xwd/ffmpeg/wmctrl/gdbus、Nemo、Chrome/Firefox、Qt 6.12 本地 kit（仅探针）。**不 sudo、不安装系统包。**
 - 原生隔离：`build-support/linux-native-test.py`（私有 Xephyr 1280x800、私有 HOME/OINK_HOME/XDG/D-Bus/PipeWire、禁 Xephyr 虚拟键鼠；探针串行）。模板：
   ```bash
@@ -127,4 +127,4 @@ python3 -m unittest discover -s build-support -p 'test_linux*.py'    # 289 OK
 
 | 日期 | 代理 | 范围 | 结果 | 产物 |
 |---|---|---|---|---|
-| 2026-11-21 | Qoder（第八轮接手） | 阶段 4 W1–W6 | 输入/显示/反馈实现完成；门禁与原生探针全绿；混合负载完成；待真实会话验收 | 本地提交 `f5b78e5..831d929` + W6 提交；证据 `.release-tools/linux-probes/phase4-gate-2026-11-21/`；本文档 |
+| 2026-11-21 | Qoder（第八轮接手） | 阶段 4 W1–W6 | 输入/显示/反馈实现完成；门禁与原生探针全绿；混合负载完成；待真实会话验收 | 本地提交 `f5b78e5..cf5a2fa`；证据 `.release-tools/linux-probes/phase4-gate-2026-11-21/`；本文档 |

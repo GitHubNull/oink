@@ -435,6 +435,7 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - W4 `da2edc3`：`linux/arrangement.rs` 排列事务（快照、陈旧版本拒绝、无操作快速返回、失败回滚并重读回报）；`linux/wallpaper.rs` Cinnamon 壁纸读取/缩略图/变化观察，GSettings keyfile 安全路径。5 文件 +1116/−8。
 - W5 `831d929`：`oink-locator` Linux 后端。`linux.rs` 平台装配，`projection/linux.rs`、`notification/linux.rs`、`text_linux.rs`（Pango/Cairo 中文与 DPI），`x11/{shm,shape}.rs` 修复 `XShmSegmentInfo` 需 Box 固定的问题；depth-32 ARGB、override-redirect、XFixes 输入 shape、Expose 重绘、通知点击与 Cinnamon 动效开关。13 文件 +1263/−41。
 - 新增/拆分文件均 ≤500 行（最大 `linux/capture.rs` 446、`x11/mod.rs` 438、`wallpaper.rs` 424）。
+- W6 `cf5a2fa`：混合负载驱动与叠层示例、全量门禁与 30 分钟负载、证据矩阵、真实会话清单、阶段 5 交接；同一提交在 `Cargo.toml` 关闭 dev incremental 并限 `debug=1`，控制本机构建磁盘/内存占用。仅本地提交，未推送。
 
 ### W6 门禁（当前树，HEAD `831d929` + W6 工作区）
 
