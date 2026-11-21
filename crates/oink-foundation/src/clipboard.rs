@@ -35,6 +35,7 @@ pub enum ClipData {
 pub enum ClipPlatform {
     Mac,
     Windows,
+    Linux,
     /// An open wire platform without a native reconstruction contract here.
     Unknown,
 }

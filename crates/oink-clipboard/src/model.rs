@@ -69,7 +69,7 @@ impl Inventory {
         let mut roots: Vec<_> = self
             .roots
             .iter()
-            .filter(|node| target != ClipPlatform::Windows || node.kind.symlink_target().is_none())
+            .filter(|node| publishes_symlinks(target) || node.kind.symlink_target().is_none())
             .cloned()
             .collect();
         let mut seen: std::collections::HashSet<_> = roots.iter().map(|n| n.id).collect();
@@ -114,7 +114,7 @@ impl Inventory {
         let skipped: std::collections::HashSet<_> = self
             .roots
             .iter()
-            .filter(|root| target == ClipPlatform::Windows && root.kind.symlink_target().is_some())
+            .filter(|root| !publishes_symlinks(target) && root.kind.symlink_target().is_some())
             .map(|root| root.id)
             .collect();
         self.items.iter().flat_map(move |item| {
@@ -232,6 +232,13 @@ pub fn automatic_pull(sizes: impl IntoIterator<Item = ContentSize>, budget: u64)
         .is_some()
 }
 
+/// Windows cannot carry links in CF_HDROP; the Linux publisher refuses links so
+/// every local file it names stays inside a validated root. Both platforms drop
+/// link roots instead of resolving them for the peer.
+fn publishes_symlinks(platform: ClipPlatform) -> bool {
+    !matches!(platform, ClipPlatform::Windows | ClipPlatform::Linux)
+}
+
 #[cfg(all(test, debug_assertions))]
 mod automatic_file_tests {
     use super::*;
@@ -296,6 +303,36 @@ mod automatic_file_tests {
         assert!(inventory.automatic_pull(ClipPlatform::Mac));
         inventory.roots[0].size = ContentSize::Known(AUTO_PULL_BYTES - 2);
         assert!(!inventory.automatic_pull(ClipPlatform::Mac));
+    }
+    #[test]
+    fn native_linux_atoms_are_private_to_linux_targets() {
+        let mut inventory = crate::content::tests::fixture().inventory();
+        inventory.platform = ClipPlatform::Linux;
+        inventory.items[0].representations[0].format = NativeFormat::LinuxAtom("text/x-moz-url".into());
+        inventory.items[0].representations[1].format = NativeFormat::LinuxAtom("UTF8_STRING".into());
+        assert_eq!(inventory.wanted(ClipPlatform::Linux).count(), 2);
+        // The portable text representation still translates for foreign peers;
+        // the atom-only one must never be requested outside Linux.
+        assert_eq!(inventory.wanted(ClipPlatform::Mac).count(), 1);
+        assert_eq!(inventory.wanted(ClipPlatform::Windows).count(), 1);
+        assert_eq!(inventory.wanted(ClipPlatform::Unknown).count(), 0);
+        assert!(inventory.wanted(ClipPlatform::Mac).all(|rep| rep.standard.is_some()));
+        assert!(!inventory.automatic_pull(ClipPlatform::Linux));
+        inventory.items[0].representations[0].data = RepresentationData::Inline(vec![1]);
+        inventory.items[0].representations[1].data = RepresentationData::Inline(vec![2]);
+        assert!(inventory.automatic_pull(ClipPlatform::Linux));
+    }
+    #[test]
+    fn windows_and_linux_never_publish_link_roots() {
+        let mut inventory = offer(1, RepresentationData::File(NodeId(1)));
+        inventory.items[0].file = Some(NodeId(1));
+        inventory.roots[0].kind = NodeKind::Symlink("../escape".into());
+        for target in [ClipPlatform::Windows, ClipPlatform::Linux] {
+            assert!(inventory.namespace_roots_for(target).is_empty());
+            assert_eq!(inventory.wanted(target).count(), 0);
+        }
+        assert_eq!(inventory.namespace_roots_for(ClipPlatform::Mac).len(), 1);
+        assert_eq!(inventory.wanted(ClipPlatform::Mac).count(), 1);
     }
 }
 

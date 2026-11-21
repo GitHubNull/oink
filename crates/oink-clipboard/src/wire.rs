@@ -96,6 +96,7 @@ pub fn platform(value: ClipPlatform) -> &'static str {
     match value {
         ClipPlatform::Mac => "macos",
         ClipPlatform::Windows => "windows",
+        ClipPlatform::Linux => "linux",
         ClipPlatform::Unknown => "unknown",
     }
 }
@@ -103,6 +104,7 @@ fn local_platform(value: &str) -> v1::Result<ClipPlatform> {
     match value {
         "macos" => Ok(ClipPlatform::Mac),
         "windows" => Ok(ClipPlatform::Windows),
+        "linux" => Ok(ClipPlatform::Linux),
         _ => Ok(ClipPlatform::Unknown),
     }
 }
@@ -129,6 +131,7 @@ pub fn format(value: &domain::NativeFormat) -> wire::FormatId {
         domain::NativeFormat::Mac(name) => format!("mac-uti:{name}"),
         domain::NativeFormat::WindowsRegistered(name) => format!("win-name:{name}"),
         domain::NativeFormat::WindowsPredefined(id) => format!("win-cf:{id}"),
+        domain::NativeFormat::LinuxAtom(name) => format!("linux-atom:{name}"),
         domain::NativeFormat::Unknown(name) => name.clone(),
     })
 }
@@ -136,6 +139,7 @@ fn local_format(value: wire::FormatId) -> v1::Result<domain::NativeFormat> {
     let (namespace, name) = value.0.split_once(':').ok_or_else(invalid)?;
     Ok(match namespace {
         "mac-uti" => domain::NativeFormat::Mac(name.into()),
+        "linux-atom" => domain::NativeFormat::LinuxAtom(name.into()),
         "win-name" => domain::NativeFormat::WindowsRegistered(name.into()),
         "win-cf" => match name
             .parse::<u16>()
@@ -1174,6 +1178,44 @@ mod tests {
         assert_eq!(supported.platform, ClipPlatform::Unknown);
         assert!(matches!(&supported.items[0].representations[0].format,
             domain::NativeFormat::Unknown(name) if name == "future-format:opaque"));
+        assert_eq!(supported.wanted(ClipPlatform::Mac).count(), 1);
+        assert_eq!(supported.wanted(ClipPlatform::Unknown).count(), 0);
+        supported.validate().unwrap();
+    }
+    #[test]
+    fn linux_platform_and_atom_namespace_round_trip_within_v1_fields() {
+        let source = crate::content::tests::fixture().inventory();
+        let mut raw = inventory(&source).unwrap().into_raw();
+        raw.insert(2, V::Text("linux".into()));
+        let V::Array(items) = raw.get_mut(&3).unwrap() else {
+            panic!()
+        };
+        let V::Map(item) = &mut items[0] else { panic!() };
+        let V::Array(reps) = item.get_mut(&3).unwrap() else {
+            panic!()
+        };
+        for (rep, format) in reps
+            .iter_mut()
+            .zip(["linux-atom:text/x-moz-url", "linux-atom:UTF8_STRING"])
+        {
+            let V::Map(rep) = rep else { panic!() };
+            rep.insert(2, V::Text(format.into()));
+        }
+        let original = wire::Inventory::from_raw(raw).unwrap();
+        let decoded = wire::Inventory::from_raw(
+            v1::cbor::decode_map(
+                &original.encode(domain::INVENTORY_BYTES).unwrap(),
+                domain::INVENTORY_BYTES,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(original, decoded);
+        let supported = local_inventory(&decoded).unwrap();
+        assert_eq!(supported.platform, ClipPlatform::Linux);
+        assert!(matches!(&supported.items[0].representations[0].format,
+            domain::NativeFormat::LinuxAtom(name) if name == "text/x-moz-url"));
+        assert_eq!(supported.wanted(ClipPlatform::Linux).count(), 2);
         assert_eq!(supported.wanted(ClipPlatform::Mac).count(), 1);
         assert_eq!(supported.wanted(ClipPlatform::Unknown).count(), 0);
         supported.validate().unwrap();

@@ -135,6 +135,7 @@ fn format_name(format: &NativeFormat) -> String {
         NativeFormat::Mac(name) => format!("mac:{name}"),
         NativeFormat::WindowsRegistered(name) => format!("win:{}", name.to_ascii_lowercase()),
         NativeFormat::WindowsPredefined(cf) => format!("win-cf:{cf}"),
+        NativeFormat::LinuxAtom(name) => format!("linux-atom:{name}"),
         NativeFormat::Unknown(name) => format!("unknown:{name}"),
     }
 }

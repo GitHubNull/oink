@@ -30,6 +30,7 @@ fn name(format: &NativeFormat) -> String {
     match format {
         NativeFormat::Mac(n) | NativeFormat::WindowsRegistered(n) | NativeFormat::Unknown(n) => n.clone(),
         NativeFormat::WindowsPredefined(n) => format!("win-cf:{n}"),
+        NativeFormat::LinuxAtom(n) => format!("linux-atom:{n}"),
     }
 }
 fn error<T>(_: T) -> ClipboardError {

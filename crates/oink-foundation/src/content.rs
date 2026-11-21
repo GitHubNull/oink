@@ -48,6 +48,8 @@ pub enum NativeFormat {
     WindowsRegistered(#[serde(deserialize_with = "bounded::string::<_, 4096>")] String),
     /// Only predefined CF_* values (1..=17); private numeric ranges are unsupported.
     WindowsPredefined(u16),
+    /// X11 selection target/atom name. Names are case-sensitive.
+    LinuxAtom(#[serde(deserialize_with = "bounded::string::<_, 4096>")] String),
     /// Retained format identity; only a recognised portable contract can render it.
     Unknown(String),
 }
@@ -57,6 +59,7 @@ impl std::fmt::Debug for NativeFormat {
             Self::Mac(_) => "MacFormat",
             Self::WindowsRegistered(_) => "WindowsRegisteredFormat",
             Self::WindowsPredefined(_) => "WindowsPredefinedFormat",
+            Self::LinuxAtom(_) => "LinuxAtomFormat",
             Self::Unknown(_) => "UnsupportedFormat",
         })
     }
@@ -65,13 +68,14 @@ impl NativeFormat {
     pub fn platform(&self) -> ClipPlatform {
         match self {
             Self::Mac(_) => ClipPlatform::Mac,
+            Self::LinuxAtom(_) => ClipPlatform::Linux,
             Self::Unknown(_) => ClipPlatform::Unknown,
             _ => ClipPlatform::Windows,
         }
     }
     pub fn valid(&self) -> bool {
         match self {
-            Self::Mac(name) | Self::WindowsRegistered(name) => {
+            Self::Mac(name) | Self::WindowsRegistered(name) | Self::LinuxAtom(name) => {
                 !name.is_empty() && name.len() <= 4096 && !name.contains('\0')
             }
             Self::WindowsPredefined(id) => (1..=17).contains(id),

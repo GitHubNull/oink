@@ -149,6 +149,8 @@ pub(super) fn native_inventory(id: OfferId, items: &[ClipData], retained: Option
             id,
             platform: if cfg!(target_os = "macos") {
                 ClipPlatform::Mac
+            } else if cfg!(target_os = "linux") {
+                ClipPlatform::Linux
             } else {
                 ClipPlatform::Windows
             },
