@@ -12,6 +12,7 @@ from unittest import mock
 
 import linux_dnd_protocol as protocol
 import linux_dnd_scenarios as scenarios
+import linux_phase5_dnd_scenarios as phase5
 
 
 def environment(root, display=':123'):
@@ -172,8 +173,10 @@ class FramingTests(unittest.TestCase):
                  'linux_phase5_clipboard_scenarios.py',
                  'linux_phase5_files_peer.c',
                  'linux_phase5_files_scenarios.py',
+                 'linux_phase5_dnd_scenarios.py',
                  'crates/oink-clipboard/examples/phase5_clipboard_probe.rs',
-                 'crates/oink-clipboard/examples/phase5_files_probe.rs')
+                 'crates/oink-clipboard/examples/phase5_files_probe.rs',
+                 'crates/oink-clipboard/examples/phase5_dnd_probe.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)
@@ -193,6 +196,39 @@ class FramingTests(unittest.TestCase):
             scenarios.exact({'drop': 0}, drop=1)
         with self.assertRaises(KeyError):
             scenarios.exact({}, received=1)
+
+
+class Phase5DndSummaryTests(unittest.TestCase):
+    def test_fnv1a_matches_the_c_role_payload_hash(self):
+        self.assertEqual(phase5.fnv1a(b''), 2166136261)
+        self.assertEqual(phase5.fnv1a(b'a'), 0xE40C292C)
+        self.assertEqual(phase5.fnv1a(b'abc'), 0x1A47E90B)
+
+    def test_digest_words_split_sha256_into_big_endian_role_words(self):
+        raw = bytes(range(32))
+        words = phase5.digest_words(raw.hex())
+        self.assertEqual(words, [int.from_bytes(raw[i:i + 4], 'big') for i in range(0, 32, 4)])
+        with self.assertRaises(protocol.Failure):
+            phase5.digest_words('abcd')
+
+    def test_probe_event_summary_counts_and_per_operation_outcomes(self):
+        events = [
+            {'event': 'ready', 'mode': 'catcher'},
+            {'event': 'detected', 'operation': 11, 'items': []},
+            {'event': 'source-ended', 'operation': 11, 'accepted': False},
+            {'event': 'detected', 'operation': 12, 'items': []},
+            {'event': 'source-ended', 'operation': 12, 'accepted': True},
+        ]
+        summary = phase5.summarize_probe_events(events)
+        self.assertEqual(summary['counts']['detected'], 2)
+        self.assertEqual(summary['counts']['source-ended'], 2)
+        self.assertEqual(summary['operations'], {'11': {'accepted': False}, '12': {'accepted': True}})
+
+    def test_probe_event_summary_rejects_malformed_lines(self):
+        with self.assertRaises(protocol.Failure):
+            phase5.summarize_probe_events([{'operation': 1}])
+        with self.assertRaises(protocol.Failure):
+            phase5.summarize_probe_events([{'event': 3}])
 
 
 class ControlTimingTests(unittest.TestCase):

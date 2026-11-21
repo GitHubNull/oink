@@ -39,6 +39,15 @@ pub(super) struct Transfer {
     started: Instant,
 }
 
+/// Where one conversion answer lands: the requestor window, the property it
+/// named and the target atom being answered.
+#[derive(Clone, Copy)]
+struct Reply {
+    requestor: u64,
+    property: u64,
+    target: u64,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) ownership: Option<Ownership>,
@@ -50,6 +59,8 @@ pub(super) struct State {
 
 pub(super) struct Context {
     pub(super) window: u64,
+    /// The selection this owner thread serves (CLIPBOARD or XdndSelection).
+    pub(super) selection: u64,
     pub(super) wake: Arc<Wakeup>,
     pub(super) jobs: mpsc::Sender<JobDone>,
 }
@@ -60,7 +71,7 @@ pub(super) fn handle_event(conn: &Conn, atoms: &Atoms, ctx: &Context, state: &mu
     if type_ == x11::EVENT_TYPE_SELECTION_CLEAR {
         // SAFETY: the event type selects the SelectionClear arm.
         let clear = unsafe { event.selection_clear };
-        if clear.selection == atoms.clipboard && clear.window == ctx.window {
+        if clear.selection == ctx.selection && clear.window == ctx.window {
             release_transfers(conn, state);
             state.ownership = None;
         }
@@ -89,7 +100,7 @@ fn serve(conn: &Conn, atoms: &Atoms, ctx: &Context, state: &mut State, request: 
     let (generation, timestamp, source) = match &state.ownership {
         None => return,
         Some(ownership) => {
-            if request.selection != atoms.clipboard || request.owner != ctx.window {
+            if request.selection != ctx.selection || request.owner != ctx.window {
                 return;
             }
             (
@@ -105,16 +116,21 @@ fn serve(conn: &Conn, atoms: &Atoms, ctx: &Context, state: &mut State, request: 
         request.property
     };
     if request.time != 0 && request.time < u64::from(timestamp) {
-        refuse(conn, atoms, request.requestor, request.target);
+        refuse(conn, ctx.selection, request.requestor, request.target);
         return;
     }
     if request.target == atoms.multiple {
-        serve_multiple(conn, atoms, state, request, property);
+        serve_multiple(conn, atoms, ctx.selection, state, request, property);
         return;
     }
     match source {
         Some(Source::Bytes(bytes)) => {
-            write_target(conn, atoms, state, request.requestor, property, request.target, &bytes);
+            let reply = Reply {
+                requestor: request.requestor,
+                property,
+                target: request.target,
+            };
+            write_target(conn, atoms, ctx.selection, state, &reply, &bytes);
         }
         Some(Source::Lazy(read)) => {
             let job = Job {
@@ -123,13 +139,20 @@ fn serve(conn: &Conn, atoms: &Atoms, ctx: &Context, state: &mut State, request: 
                 property,
                 generation,
             };
-            spawn_job(conn, atoms, ctx, state, job, read);
+            spawn_job(conn, ctx, state, job, read);
         }
-        None => control_target(conn, atoms, state, request, property),
+        None => control_target(conn, atoms, ctx.selection, state, request, property),
     }
 }
 
-fn control_target(conn: &Conn, atoms: &Atoms, state: &State, request: &x11::XSelectionRequestEvent, property: u64) {
+fn control_target(
+    conn: &Conn,
+    atoms: &Atoms,
+    selection: u64,
+    state: &State,
+    request: &x11::XSelectionRequestEvent,
+    property: u64,
+) {
     let Some(ownership) = &state.ownership else {
         return;
     };
@@ -143,10 +166,10 @@ fn control_target(conn: &Conn, atoms: &Atoms, state: &State, request: &x11::XSel
             &target_list(atoms, ownership),
         );
     } else {
-        refuse(conn, atoms, request.requestor, request.target);
+        refuse(conn, selection, request.requestor, request.target);
         return;
     }
-    conn.send_selection_notify(request.requestor, atoms.clipboard, request.target, property);
+    conn.send_selection_notify(request.requestor, selection, request.target, property);
 }
 
 fn target_list(atoms: &Atoms, ownership: &Ownership) -> Vec<u32> {
@@ -162,6 +185,7 @@ fn target_list(atoms: &Atoms, ownership: &Ownership) -> Vec<u32> {
 fn serve_multiple(
     conn: &Conn,
     atoms: &Atoms,
+    selection: u64,
     state: &mut State,
     request: &x11::XSelectionRequestEvent,
     property: u64,
@@ -197,31 +221,35 @@ fn serve_multiple(
             conn.delete_property(request.requestor, pair_property);
         }
     }
-    conn.send_selection_notify(request.requestor, atoms.clipboard, atoms.multiple, property);
+    conn.send_selection_notify(request.requestor, selection, atoms.multiple, property);
 }
 
 fn write_target(
     conn: &Conn,
     atoms: &Atoms,
+    selection: u64,
     state: &mut State,
-    requestor: u64,
-    property: u64,
-    target: u64,
+    reply: &Reply,
     data: &[u8],
 ) {
+    let Reply {
+        requestor,
+        property,
+        target,
+    } = *reply;
     if data.len() <= DIRECT_LIMIT {
         conn.change_property(requestor, property, target, 8, data);
-        conn.send_selection_notify(requestor, atoms.clipboard, target, property);
+        conn.send_selection_notify(requestor, selection, target, property);
         return;
     }
     if state.transfers.len() >= MAX_TRANSFERS {
-        refuse(conn, atoms, requestor, target);
+        refuse(conn, selection, requestor, target);
         return;
     }
     let now = Instant::now();
     conn.select_input(requestor, x11::PROPERTY_CHANGE_MASK);
     conn.change_property32(requestor, property, atoms.incr, &[data.len() as u32]);
-    conn.send_selection_notify(requestor, atoms.clipboard, target, property);
+    conn.send_selection_notify(requestor, selection, target, property);
     state.transfers.insert(
         (requestor, property),
         Transfer {
@@ -298,7 +326,6 @@ struct Job {
 
 fn spawn_job(
     conn: &Conn,
-    atoms: &Atoms,
     ctx: &Context,
     state: &mut State,
     job: Job,
@@ -306,7 +333,7 @@ fn spawn_job(
 ) {
     let (requestor, target) = (job.requestor, job.target);
     if state.jobs >= MAX_JOBS {
-        refuse(conn, atoms, requestor, target);
+        refuse(conn, ctx.selection, requestor, target);
         return;
     }
     state.jobs += 1;
@@ -327,21 +354,28 @@ fn spawn_job(
         });
     if spawned.is_err() {
         state.jobs -= 1;
-        refuse(conn, atoms, requestor, target);
+        refuse(conn, ctx.selection, requestor, target);
     }
 }
 
-pub(super) fn finish_job(conn: &Conn, atoms: &Atoms, state: &mut State, done: JobDone) {
+pub(super) fn finish_job(conn: &Conn, atoms: &Atoms, selection: u64, state: &mut State, done: JobDone) {
     state.jobs = state.jobs.saturating_sub(1);
     if !matches!(state.ownership.as_ref(), Some(ownership) if ownership.generation == done.generation) {
         return;
     }
     match done.result {
-        Ok(data) => write_target(conn, atoms, state, done.requestor, done.property, done.target, &data),
-        Err(_) => refuse(conn, atoms, done.requestor, done.target),
+        Ok(data) => {
+            let reply = Reply {
+                requestor: done.requestor,
+                property: done.property,
+                target: done.target,
+            };
+            write_target(conn, atoms, selection, state, &reply, &data);
+        }
+        Err(_) => refuse(conn, selection, done.requestor, done.target),
     }
 }
 
-fn refuse(conn: &Conn, atoms: &Atoms, requestor: u64, target: u64) {
-    conn.send_selection_notify(requestor, atoms.clipboard, target, 0);
+fn refuse(conn: &Conn, selection: u64, requestor: u64, target: u64) {
+    conn.send_selection_notify(requestor, selection, target, 0);
 }

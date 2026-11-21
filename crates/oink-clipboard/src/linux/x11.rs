@@ -9,13 +9,14 @@ use std::ptr;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 pub(crate) use x11_dl::xlib::{XEvent, XSelectionRequestEvent};
-use x11_dl::xlib::{Display, XSetWindowAttributes, Xlib};
+use x11_dl::xlib::{ClientMessageData, Display, XSetWindowAttributes, Xlib};
 
 pub(crate) const PROPERTY_CHANGE_MASK: i64 = 1 << 22;
 pub(crate) const EVENT_TYPE_PROPERTY_NOTIFY: i32 = 28;
 pub(crate) const EVENT_TYPE_SELECTION_CLEAR: i32 = 29;
 pub(crate) const EVENT_TYPE_SELECTION_REQUEST: i32 = 30;
 pub(crate) const EVENT_TYPE_SELECTION_NOTIFY: i32 = 31;
+pub(crate) const EVENT_TYPE_CLIENT_MESSAGE: i32 = 33;
 pub(crate) const EVENT_STATE_NEW_VALUE: i32 = 0;
 pub(crate) const EVENT_STATE_DELETE: i32 = 1;
 /// Public ICCCM mask bits for `XFixesSelectSelectionInput`.
@@ -28,6 +29,7 @@ pub(crate) const XFIXES_SUBTYPE_WINDOW_DESTROY: i32 = 1;
 pub(crate) const XFIXES_SUBTYPE_CLIENT_CLOSE: i32 = 2;
 
 const CW_EVENT_MASK: u64 = 1 << 11;
+const CW_OVERRIDE_REDIRECT: u64 = 1 << 9;
 const INPUT_ONLY: u32 = 2;
 const PROP_MODE_REPLACE: i32 = 0;
 const PROPERTY_TYPE_NONE: u64 = 0;
@@ -107,14 +109,292 @@ impl Conn {
         Ok(window)
     }
 
+    /// An override-redirect InputOnly window never interacts with the WM.
+    pub(crate) fn create_override_window(&self, event_mask: i64) -> io::Result<u64> {
+        let root = self.root_window();
+        // SAFETY: InputOnly windows take CopyFromParent depth, a null visual and
+        // exactly the attributes initialized below.
+        let mut attrs: XSetWindowAttributes = unsafe { std::mem::zeroed() };
+        attrs.override_redirect = 1;
+        attrs.event_mask = event_mask as _;
+        // SAFETY: see the attribute initialization above.
+        let window = unsafe {
+            (self.xlib.XCreateWindow)(
+                self.dpy,
+                root,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                INPUT_ONLY,
+                ptr::null_mut(),
+                CW_EVENT_MASK | CW_OVERRIDE_REDIRECT,
+                &mut attrs,
+            )
+        };
+        if window == 0 {
+            return Err(io::Error::other("XCreateWindow failed"));
+        }
+        Ok(window)
+    }
+
     pub(crate) fn destroy_window(&self, window: u64) {
         // SAFETY: window was created on this connection.
         unsafe { (self.xlib.XDestroyWindow)(self.dpy, window) };
     }
 
-    fn root_window(&self) -> u64 {
+    pub(crate) fn root_window(&self) -> u64 {
         // SAFETY: default screen and root window always exist for a live display.
         unsafe { (self.xlib.XDefaultRootWindow)(self.dpy) }
+    }
+
+    /// Root dimensions in pixels; the held catcher spans exactly this so the
+    /// pointer can never leave it, without an oversized ConfigureNotify.
+    pub(crate) fn root_size(&self) -> (u32, u32) {
+        let root = self.root_window();
+        let mut r_return = 0u64;
+        let (mut x, mut y) = (0i32, 0i32);
+        let (mut width, mut height) = (0u32, 0u32);
+        let (mut border, mut depth) = (0u32, 0u32);
+        // SAFETY: all out pointers are valid stack variables for the root id.
+        unsafe {
+            let _ = (self.xlib.XGetGeometry)(
+                self.dpy,
+                root,
+                &mut r_return,
+                &mut x,
+                &mut y,
+                &mut width,
+                &mut height,
+                &mut border,
+                &mut depth,
+            );
+        }
+        (width.max(1), height.max(1))
+    }
+
+    pub(crate) fn move_resize_window(&self, window: u64, x: i32, y: i32, width: u32, height: u32) {
+        // SAFETY: window was created on this connection.
+        unsafe { (self.xlib.XMoveResizeWindow)(self.dpy, window, x, y, width, height) };
+    }
+
+    pub(crate) fn map_raised(&self, window: u64) {
+        // SAFETY: window was created on this connection.
+        unsafe { (self.xlib.XMapRaised)(self.dpy, window) };
+    }
+
+    pub(crate) fn unmap_window(&self, window: u64) {
+        // SAFETY: window was created on this connection.
+        unsafe { (self.xlib.XUnmapWindow)(self.dpy, window) };
+    }
+
+    /// Root coordinates of the pointer; None when it is on another screen.
+    pub(crate) fn query_pointer(&self) -> Option<(i32, i32)> {
+        self.query_pointer_full().map(|(x, y, _)| (x, y))
+    }
+
+    /// Root coordinates plus the current button/key modifier mask. The mask
+    /// reflects XTEST-injected button state, so drag loops can observe an
+    /// injected release without a second event subscription.
+    pub(crate) fn query_pointer_full(&self) -> Option<(i32, i32, u32)> {
+        let root = self.root_window();
+        let (mut root_return, mut child_return) = (0u64, 0u64);
+        let (mut root_x, mut root_y, mut win_x, mut win_y) = (0i32, 0i32, 0i32, 0i32);
+        let mut mask = 0u32;
+        // SAFETY: all out pointers are valid stack variables.
+        let ok = unsafe {
+            (self.xlib.XQueryPointer)(
+                self.dpy,
+                root,
+                &mut root_return,
+                &mut child_return,
+                &mut root_x,
+                &mut root_y,
+                &mut win_x,
+                &mut win_y,
+                &mut mask,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        Some((root_x, root_y, mask))
+    }
+
+    /// The immediate child of `window` under the pointer, descending until the
+    /// leaf. Windows in `skip` (and their subtrees) end the walk.
+    pub(crate) fn pointer_leaf(&self, skip: &[u64]) -> Option<u64> {
+        let mut window = self.query_pointer_in(self.root_window(), skip)?;
+        let mut depth = 0;
+        while depth < 32 {
+            let Some(child) = self.query_pointer_in(window, skip) else {
+                break;
+            };
+            window = child;
+            depth += 1;
+        }
+        Some(window)
+    }
+
+    fn query_pointer_in(&self, window: u64, skip: &[u64]) -> Option<u64> {
+        let (mut root_return, mut child_return) = (0u64, 0u64);
+        let (mut root_x, mut root_y, mut win_x, mut win_y) = (0i32, 0i32, 0i32, 0i32);
+        let mut mask = 0u32;
+        // SAFETY: all out pointers are valid stack variables.
+        let ok = unsafe {
+            (self.xlib.XQueryPointer)(
+                self.dpy,
+                window,
+                &mut root_return,
+                &mut child_return,
+                &mut root_x,
+                &mut root_y,
+                &mut win_x,
+                &mut win_y,
+                &mut mask,
+            )
+        };
+        if ok == 0 || child_return == 0 || skip.contains(&child_return) {
+            return None;
+        }
+        Some(child_return)
+    }
+
+    /// The parent of a window, stopping before the root.
+    pub(crate) fn parent_of(&self, window: u64) -> Option<u64> {
+        let root = self.root_window();
+        let (mut root_return, mut parent_return) = (0u64, 0u64);
+        let mut children: *mut u64 = ptr::null_mut();
+        let mut count = 0u32;
+        // SAFETY: all out pointers are valid stack variables; children is XFree'd.
+        let ok = unsafe {
+            (self.xlib.XQueryTree)(
+                self.dpy,
+                window,
+                &mut root_return,
+                &mut parent_return,
+                &mut children,
+                &mut count,
+            )
+        };
+        if !children.is_null() {
+            // SAFETY: children came from XQueryTree.
+            unsafe { (self.xlib.XFree)(children.cast()) };
+        }
+        (ok != 0 && parent_return != 0 && parent_return != root).then_some(parent_return)
+    }
+
+    /// Children of a window in bottom-to-top stacking order.
+    #[cfg(test)]
+    pub(crate) fn query_tree(&self, window: u64) -> Vec<u64> {
+        let (mut root_return, mut parent_return) = (0u64, 0u64);
+        let mut children: *mut u64 = ptr::null_mut();
+        let mut count = 0u32;
+        // SAFETY: all out pointers are valid stack variables; children is XFree'd.
+        let ok = unsafe {
+            (self.xlib.XQueryTree)(
+                self.dpy,
+                window,
+                &mut root_return,
+                &mut parent_return,
+                &mut children,
+                &mut count,
+            )
+        };
+        if ok == 0 || children.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: the library returned `count` window ids.
+        let ids = unsafe { std::slice::from_raw_parts(children, count as usize) }.to_vec();
+        // SAFETY: children came from XQueryTree.
+        unsafe { (self.xlib.XFree)(children.cast()) };
+        ids
+    }
+
+    /// Send an XDND ClientMessage with five 32-bit data words to one window.
+    pub(crate) fn send_client_message(&self, window: u64, type_: u64, data: [u32; 5]) {
+        // SAFETY: XEvent is plain data; the client_message arm is fully
+        // initialized below before the event is sent.
+        let mut event: XEvent = unsafe { std::mem::zeroed() };
+        {
+            // SAFETY: the event type below selects the ClientMessage arm.
+            let event = unsafe { &mut event.client_message };
+            event.type_ = EVENT_TYPE_CLIENT_MESSAGE;
+            event.window = window;
+            event.message_type = type_;
+            event.format = 32;
+            event.data = ClientMessageData::new();
+            for (index, value) in data.into_iter().enumerate() {
+                event.data.set_long(index, i64::from(value));
+            }
+        }
+        // SAFETY: marshalled event, no propagation mask, sent to one window.
+        unsafe { (self.xlib.XSendEvent)(self.dpy, window, 0, 0, &mut event) };
+    }
+
+    /// Decode one received ClientMessage into its five 32-bit words.
+    pub(crate) fn client_message_words(&self, event: &XEvent) -> Option<(u64, u64, [u32; 5])> {
+        // SAFETY: the union is plain data; type_ is always initialized.
+        if unsafe { event.type_ } != EVENT_TYPE_CLIENT_MESSAGE {
+            return None;
+        }
+        // SAFETY: the event type selects the ClientMessage arm.
+        let message = unsafe { &event.client_message };
+        if message.format != 32 {
+            return None;
+        }
+        let mut words = [0u32; 5];
+        for (index, word) in words.iter_mut().enumerate() {
+            *word = u32::try_from(message.data.get_long(index)).unwrap_or(0);
+        }
+        Some((message.window, message.message_type, words))
+    }
+
+    /// Read one 32-bit word without deleting the property; None when absent.
+    pub(crate) fn read_value32_keep(&self, window: u64, property: u64) -> io::Result<Option<u32>> {
+        Ok(self.read_values32_keep(window, property, 1)?.into_iter().next())
+    }
+
+    /// Read up to `limit` 32-bit words without deleting the property; an empty
+    /// vector means the property is absent or has the wrong format.
+    pub(crate) fn read_values32_keep(&self, window: u64, property: u64, limit: usize) -> io::Result<Vec<u32>> {
+        let mut type_ = 0u64;
+        let mut format = 0i32;
+        let mut items = 0u64;
+        let mut bytes_after = 0u64;
+        let mut data: *mut u8 = ptr::null_mut();
+        // SAFETY: all outputs are initialized; data is XFree'd after copying.
+        let status = unsafe {
+            (self.xlib.XGetWindowProperty)(
+                self.dpy,
+                window,
+                property,
+                0,
+                limit.max(1) as _,
+                0,
+                PROPERTY_TYPE_NONE,
+                &mut type_,
+                &mut format,
+                &mut items,
+                &mut bytes_after,
+                &mut data,
+            )
+        };
+        let value = if status != 0 || type_ == 0 || format != 32 || data.is_null() {
+            Vec::new()
+        } else {
+            let count = items.min(limit as u64) as usize;
+            // SAFETY: the library returned `count` initialized longs.
+            let words = unsafe { std::slice::from_raw_parts(data as *mut std::ffi::c_long, count) };
+            words.iter().filter_map(|word| u32::try_from(*word).ok()).collect()
+        };
+        if !data.is_null() {
+            // SAFETY: data came from XGetWindowProperty.
+            unsafe { (self.xlib.XFree)(data.cast()) };
+        }
+        Ok(value)
     }
 
     pub(crate) fn atom(&self, name: &str, only_if_exists: bool) -> io::Result<u64> {

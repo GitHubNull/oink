@@ -4,7 +4,7 @@ use crate::model::{DirectoryCursor, DirectoryPage, FileNode, NodeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) type Check = Arc<dyn Fn() -> io::Result<()> + Send + Sync>;
-type ReadRepresentation = Box<dyn Fn(RepresentationId) -> io::Result<FileReader> + Send + Sync>;
+pub(crate) type ReadRepresentation = Box<dyn Fn(RepresentationId) -> io::Result<FileReader> + Send + Sync>;
 
 pub(crate) struct Clipboard {
     inventory: Inventory,

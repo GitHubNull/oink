@@ -12,6 +12,8 @@ mod virtual_files;
 mod watch;
 mod x11;
 
+pub(crate) mod dnd;
+
 use crate::content;
 use crate::{
     CapturedClipboard, ChangeHandler, ClipData, ClipboardBackend, ClipboardError, ClipSnapshot, NativeSpec, Sensitivity,
@@ -306,7 +308,7 @@ pub(crate) fn backend() -> Result<Box<dyn ClipboardBackend>, ClipboardError> {
     Ok(Box::new(Backend::new()?))
 }
 
-fn platform(error: std::io::Error) -> ClipboardError {
+pub(crate) fn platform(error: std::io::Error) -> ClipboardError {
     ClipboardError::Platform(format!("X11: {error}"))
 }
 

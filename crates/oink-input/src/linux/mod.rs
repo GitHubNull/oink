@@ -306,6 +306,31 @@ impl InputBackend for X11Input {
         inject::inject(self, event)
     }
 
+    /// The DnD catcher lives on the clipboard backend's own thread; input has
+    /// no anchor bookkeeping to keep. Accepting preserves the hold contract.
+    fn set_drag_anchor(&self, _anchor: Option<oink_foundation::dnd::DragAnchor>) -> Result<(), InputError> {
+        Ok(())
+    }
+
+    /// XTEST applies absolute motion and the button press in order; the DnD
+    /// thread already guarded the press with the source-start closure.
+    fn press_drag_at(&self, at: Point) -> Result<(), InputError> {
+        self.inject(&InjectEvent::MoveTo { pos: at })?;
+        self.inject(&InjectEvent::Button {
+            button: oink_foundation::input::MouseButton::Left,
+            pressed: true,
+        })
+    }
+
+    /// Freeze is macOS-only: XTEST never drives the host cursor off the press.
+    fn freeze_drag_anchor(&self, _generation: u64) -> Result<oink_foundation::dnd::DragAnchor, InputError> {
+        Err(InputError::Unsupported)
+    }
+
+    fn relocate_drag_anchor(&self, _generation: u64, _at: Point) -> Result<(), InputError> {
+        Err(InputError::Unsupported)
+    }
+
     fn cursor_position(&self) -> Result<Point, InputError> {
         let (x, y) = self.pointer()?;
         Ok(Point {

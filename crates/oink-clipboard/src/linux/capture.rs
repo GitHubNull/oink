@@ -298,7 +298,7 @@ fn rank(level: Sensitivity) -> u8 {
     }
 }
 
-struct LinuxTranslator;
+pub(super) struct LinuxTranslator;
 impl Translator for LinuxTranslator {
     fn standard(&self, rep: &Representation, bytes: &[u8]) -> io::Result<Vec<ClipData>> {
         let NativeFormat::LinuxAtom(name) = &rep.format else {

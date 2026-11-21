@@ -23,19 +23,29 @@ pub(crate) struct Requestor {
     pub(crate) conn: Conn,
     pub(crate) atoms: Atoms,
     pub(crate) window: u64,
+    /// The selection every conversion below addresses (CLIPBOARD or XdndSelection).
+    pub(crate) selection: u64,
 }
 
 impl Requestor {
     pub(crate) fn open() -> io::Result<Self> {
-        let conn = Conn::open()?;
-        let atoms = Atoms::load(&conn)?;
-        let window = conn.create_window(x11::PROPERTY_CHANGE_MASK)?;
-        Ok(Self { conn, atoms, window })
+        Self::open_for("CLIPBOARD")
     }
 
-    /// Owner window plus ownership timestamp; None when CLIPBOARD is unowned.
+    pub(crate) fn open_for(selection: &str) -> io::Result<Self> {
+        let conn = Conn::open()?;
+        let atoms = Atoms::load(&conn)?;
+        let selection = conn.atom(selection, false)?;
+        if selection == 0 {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "selection atom is absent"));
+        }
+        let window = conn.create_window(x11::PROPERTY_CHANGE_MASK)?;
+        Ok(Self { conn, atoms, window, selection })
+    }
+
+    /// Owner window plus ownership timestamp; None when the selection is unowned.
     pub(crate) fn identity(&self) -> io::Result<Option<Identity>> {
-        let owner = self.conn.selection_owner(self.atoms.clipboard);
+        let owner = self.conn.selection_owner(self.selection);
         if owner == 0 {
             return Ok(None);
         }
@@ -134,8 +144,7 @@ impl Requestor {
 
 impl Requestor {
     fn convert(&self, target: u64) -> io::Result<()> {
-        self.conn
-            .convert(self.atoms.clipboard, target, self.atoms.oink_selection, self.window, 0);
+        self.conn.convert(self.selection, target, self.atoms.oink_selection, self.window, 0);
         let deadline = Instant::now() + NOTIFY_TIMEOUT;
         loop {
             while self.conn.pending() {
@@ -147,7 +156,7 @@ impl Requestor {
                 // SAFETY: the event type selects the SelectionNotify arm.
                 let selection = unsafe { event.selection };
                 if selection.requestor != self.window
-                    || selection.selection != self.atoms.clipboard
+                    || selection.selection != self.selection
                     || selection.target != target
                 {
                     continue;
