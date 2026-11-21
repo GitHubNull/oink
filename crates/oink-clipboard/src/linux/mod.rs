@@ -7,6 +7,8 @@ mod publish;
 mod selection;
 mod serve;
 mod sys;
+mod uris;
+mod virtual_files;
 mod watch;
 mod x11;
 
@@ -263,6 +265,29 @@ impl ClipboardBackend for Backend {
 
     fn write(&self, items: &[ClipData], sensitivity: Sensitivity) -> Result<u64, ClipboardError> {
         let binding = binding::from_items(items, sensitivity)?;
+        self.owner.publish(binding)
+    }
+
+    fn write_virtual_files(
+        &self,
+        entries: &[crate::FileEntry],
+        others: &[ClipData],
+        _contents: std::sync::Arc<dyn crate::FileContents>,
+        sensitivity: Sensitivity,
+    ) -> Result<u64, ClipboardError> {
+        // X11 transfers are path based; content is read by the pasting app.
+        // Entries served from elsewhere carry no local path until the FUSE
+        // bridge, so a list without local paths cannot be published.
+        let mut binding = if others.is_empty() && sensitivity == Sensitivity::Normal {
+            binding::Binding::default()
+        } else {
+            // A non-normal sensitivity still contributes its marker targets.
+            binding::from_items(others, sensitivity)?
+        };
+        virtual_files::add(&mut binding, &virtual_files::top_paths(entries));
+        if binding.targets.is_empty() {
+            return Err(ClipboardError::Unsupported);
+        }
         self.owner.publish(binding)
     }
 

@@ -1,18 +1,20 @@
 //! Read the current CLIPBOARD as metadata only. Payload bytes are fetched when
 //! a consumer opens a representation, and every read revalidates the owner.
+use crate::content::namespace::Local;
 use crate::content::{self, Provider, Translator};
 use crate::formats;
 use crate::linux::atoms;
 use crate::linux::selection::{self, Requestor};
-use crate::linux::{Engine, Identity, platform};
+use crate::linux::{Engine, Identity, platform, uris};
 use crate::model::{
-    ClipId, ContentItem, ContentSize, Inventory, ItemId, MAX_REPRESENTATIONS, Medium, NativeFormat, OfferId,
+    ClipId, ContentItem, ContentSize, Inventory, ItemId, MAX_REPRESENTATIONS, Medium, NativeFormat, NodeId, OfferId,
     REPRESENTATION_BYTES, Representation, RepresentationData, RepresentationId, StandardFormat, Unavailable,
 };
 use crate::{CapturedClipboard, ClipData, ClipSnapshot, ClipboardError, Sensitivity};
 use oink_foundation::DeviceId;
 use oink_foundation::clipboard::ClipPlatform;
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Privacy control values are small metadata, never content payloads.
@@ -21,9 +23,9 @@ const PRIVACY_INLINE: usize = 65536;
 pub(crate) fn capture(engine: &Engine) -> Result<CapturedClipboard, ClipboardError> {
     let requestor = Requestor::open().map_err(platform)?;
     let identity = requestor.identity().map_err(platform)?;
-    let mut inventory = match identity {
+    let (mut inventory, files) = match identity {
         Some(identity) => {
-            let inventory = inventory(&requestor).map_err(|error| {
+            let (inventory, files) = inventory(&requestor).map_err(|error| {
                 ClipboardError::ContentUnavailable(content::reason(&error))
             })?;
             // A conversion and every metadata read above belong to one owner.
@@ -31,9 +33,9 @@ pub(crate) fn capture(engine: &Engine) -> Result<CapturedClipboard, ClipboardErr
                 return Err(ClipboardError::Busy);
             }
             engine.note_captured(identity);
-            inventory
+            (inventory, files)
         }
-        None => empty_inventory(),
+        None => (empty_inventory(), None),
     };
     let count = engine.count();
     inventory.id = offer(count);
@@ -49,7 +51,7 @@ pub(crate) fn capture(engine: &Engine) -> Result<CapturedClipboard, ClipboardErr
         let expected = expected.ok_or_else(|| content::unavailable(Unavailable::NoSuchItem))?;
         read_representation(expected, &source, id)
     });
-    let native = content::clipboard::Clipboard::new(inventory, read, check, Arc::new(LinuxTranslator), None)
+    let native = content::clipboard::Clipboard::new(inventory, read, check, Arc::new(LinuxTranslator), files)
         .map_err(|error| ClipboardError::ContentUnavailable(content::reason(&error)))?;
     Ok(CapturedClipboard {
         snapshot: ClipSnapshot {
@@ -80,24 +82,43 @@ fn empty_inventory() -> Inventory {
     }
 }
 
-/// TARGETS order is preserved. File lists wait for the file bridge; unknown
-/// targets stay opaque so same-machine peers can round-trip private formats.
-fn inventory(requestor: &Requestor) -> io::Result<Inventory> {
+/// TARGETS order is preserved; file lists become a namespace of local paths
+/// instead of byte representations. Unknown targets stay opaque so
+/// same-machine peers can round-trip private formats.
+fn inventory(
+    requestor: &Requestor,
+) -> io::Result<(Inventory, Option<Arc<dyn content::namespace::Namespace>>)> {
     let targets = requestor.targets()?;
     let mut seen = std::collections::HashSet::new();
     let mut representations = Vec::new();
+    let mut file_lists = Vec::new();
     for atom in targets {
         if !seen.insert(atom) {
             continue;
         }
-        if representations.len() >= MAX_REPRESENTATIONS {
-            return Err(content::unavailable(Unavailable::LimitExceeded));
-        }
         let Some(name) = requestor.conn.atom_name(atom) else {
             continue;
         };
-        if atoms::is_control(&name) || file_target(requestor, atom, &name) {
+        if atoms::is_control(&name) {
             continue;
+        }
+        if name == atoms::GNOME_COPIED_FILES {
+            file_lists.push((atom, name, true));
+            continue;
+        }
+        if name == atoms::URI_LIST {
+            // Classify before fetching: file copies are never exposed as URLs.
+            match requestor.file_list_target(atom) {
+                Ok(Some(true)) => {
+                    file_lists.push((atom, name, false));
+                    continue;
+                }
+                Ok(_) => {}
+                Err(_) => continue,
+            }
+        }
+        if representations.len() >= MAX_REPRESENTATIONS {
+            return Err(content::unavailable(Unavailable::LimitExceeded));
         }
         let standard = if formats::is_marker(ClipPlatform::Linux, &name) {
             Some(StandardFormat::Privacy)
@@ -126,16 +147,52 @@ fn inventory(requestor: &Requestor) -> io::Result<Inventory> {
             data,
         });
     }
-    let items = if representations.is_empty() {
-        Vec::new()
-    } else {
-        vec![ContentItem {
+    let (file_names, mut files) = file_namespace(requestor, &file_lists);
+    let mut items = Vec::new();
+    let mut next_rep = representations.len() as u32 + 1;
+    if !representations.is_empty() {
+        items.push(ContentItem {
             id: ItemId(0),
             virtual_files: false,
             file: None,
             representations,
-        }]
-    };
+        });
+    }
+    if let Some(namespace) = &files {
+        // A link-only list has no publishable root on Linux.
+        let anchor = namespace
+            .roots()
+            .iter()
+            .find(|node| node.kind.symlink_target().is_none())
+            .map(|node| node.id);
+        match anchor {
+            Some(anchor) if !file_names.is_empty() => {
+                let file_reps: Vec<_> = file_names
+                    .into_iter()
+                    .map(|name| {
+                        let rep = Representation {
+                            id: RepresentationId(next_rep),
+                            format: NativeFormat::LinuxAtom(name),
+                            medium: Medium::Bytes,
+                            aspect: 1,
+                            index: -1,
+                            standard: None,
+                            data: RepresentationData::File(anchor),
+                        };
+                        next_rep += 1;
+                        rep
+                    })
+                    .collect();
+                items.push(ContentItem {
+                    id: ItemId(items.len() as u32),
+                    virtual_files: false,
+                    file: Some(anchor),
+                    representations: file_reps,
+                });
+            }
+            _ => files = None,
+        }
+    }
     let inventory = Inventory {
         id: offer(0),
         platform: ClipPlatform::Linux,
@@ -143,20 +200,49 @@ fn inventory(requestor: &Requestor) -> io::Result<Inventory> {
         roots: Vec::new(),
     };
     inventory.validate().map_err(content::unavailable)?;
-    Ok(inventory)
+    Ok((inventory, files))
 }
 
-/// A uri-list is classified before fetching: file copies are never exposed as
-/// URLs, and GNOME's file-list flavour is always file data.
-fn file_target(requestor: &Requestor, atom: u64, name: &str) -> bool {
-    if name == atoms::GNOME_COPIED_FILES {
-        return true;
+/// File-list payloads are list metadata, not file contents: every path is
+/// decoded through `uris` and rebuilt as a real local namespace.
+fn file_namespace(
+    requestor: &Requestor,
+    lists: &[(u64, String, bool)],
+) -> (Vec<String>, Option<Arc<dyn content::namespace::Namespace>>) {
+    let mut files: Option<Arc<dyn content::namespace::Namespace>> = None;
+    let mut names = Vec::new();
+    for (atom, name, gnome) in lists {
+        let Ok(bytes) = requestor.bytes(*atom, REPRESENTATION_BYTES as usize) else {
+            continue;
+        };
+        let Ok(paths) = uris::parse(&bytes, *gnome) else {
+            continue;
+        };
+        if paths.is_empty() {
+            continue;
+        }
+        if files.is_none() {
+            let roots: Vec<(NodeId, PathBuf)> = paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| (NodeId(index as u64 + 1), path.clone()))
+                .collect();
+            match Local::clipboard(roots) {
+                Ok(namespace) => files = Some(namespace),
+                Err(_) => return (Vec::new(), None),
+            }
+        }
+        names.push(name.clone());
     }
-    name == atoms::URI_LIST && !matches!(requestor.file_list_target(atom), Ok(Some(false)))
+    (names, files)
 }
 
 fn read_representation(expected: Identity, inventory: &Inventory, id: RepresentationId) -> io::Result<crate::FileReader> {
     let rep = content::find(inventory, id).ok_or_else(|| content::unavailable(Unavailable::NoSuchItem))?;
+    if matches!(rep.data, RepresentationData::File(_)) {
+        // File reps are opened through the namespace, never as X11 properties.
+        return Err(content::unavailable(Unavailable::Unsupported));
+    }
     let NativeFormat::LinuxAtom(name) = &rep.format else {
         return Err(content::unavailable(Unavailable::Unsupported));
     };

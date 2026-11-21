@@ -170,7 +170,10 @@ class FramingTests(unittest.TestCase):
                  'linux_sni_watcher.py', 'fake_logind_service.py',
                  'linux_phase5_selection_peer.c',
                  'linux_phase5_clipboard_scenarios.py',
-                 'crates/oink-clipboard/examples/phase5_clipboard_probe.rs')
+                 'linux_phase5_files_peer.c',
+                 'linux_phase5_files_scenarios.py',
+                 'crates/oink-clipboard/examples/phase5_clipboard_probe.rs',
+                 'crates/oink-clipboard/examples/phase5_files_probe.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)

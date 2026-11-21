@@ -3,6 +3,7 @@
 use crate::content::{self, url};
 use crate::formats;
 use crate::linux::atoms;
+use crate::linux::virtual_files;
 use crate::model::{Inventory, NativeFormat, Representation, RepresentationData, StandardFormat, Unavailable};
 use crate::{ClipData, ClipboardError, NativeSpec, Sensitivity};
 use oink_foundation::clipboard::ClipPlatform;
@@ -21,7 +22,7 @@ pub(crate) struct Binding {
 }
 
 impl Binding {
-    fn add(&mut self, name: &str, source: Source) {
+    pub(super) fn add(&mut self, name: &str, source: Source) {
         if !self.targets.iter().any(|(existing, _)| existing == name) {
             self.targets.push((name.to_owned(), source));
         }
@@ -98,6 +99,11 @@ pub(crate) fn from_items(items: &[ClipData], sensitivity: Sensitivity) -> Result
             _ => {}
         }
     }
+    for item in items {
+        if let ClipData::Files(entries) = item {
+            virtual_files::add(&mut binding, &virtual_files::top_paths(entries));
+        }
+    }
     if binding.targets.is_empty() {
         return Err(ClipboardError::Platform("没有可写入的内容".into()));
     }
@@ -160,6 +166,7 @@ pub(crate) fn from_spec(spec: &NativeSpec) -> Result<Binding, ClipboardError> {
             }
         }
     }
+    virtual_files::add(&mut binding, &virtual_files::top_paths(&spec.files));
     if binding.targets.is_empty() {
         return Err(ClipboardError::Unsupported);
     }
