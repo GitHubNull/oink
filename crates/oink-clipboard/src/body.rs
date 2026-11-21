@@ -364,6 +364,25 @@ pub fn platform_backend() -> Result<Box<dyn ClipboardBackend>, ClipboardError> {
     Err(ClipboardError::Unsupported)
 }
 
+/// 远程文件命名空间的只读 FUSE 桥：为 X11 URI 清单提供本机路径。
+#[cfg(target_os = "linux")]
+pub mod file_share {
+    pub use crate::linux::fuse::FileShare;
+
+    /// 为什么本进程无法挂载（setuid fusermount3 拒绝 NoNewPrivs）；None 表示可以挂载。
+    pub fn blocked_reason() -> Option<String> {
+        crate::linux::fuse::blocked_reason()
+    }
+
+    /// 只读挂载 `namespace` 并返回守护句柄；句柄 drop 时卸载。Ok(None) 表示本
+    /// 进程被阻止，Err 是意外的挂载失败。
+    pub fn mount(
+        namespace: std::sync::Arc<dyn crate::content::namespace::Namespace>,
+    ) -> std::io::Result<Option<FileShare>> {
+        crate::linux::fuse::mount_file_share(namespace)
+    }
+}
+
 // Exercise the pure Windows bitmap codec on every development platform.
 #[cfg(all(test, debug_assertions, not(windows)))]
 #[path = "windows/image.rs"]

@@ -3,6 +3,7 @@
 mod atoms;
 mod binding;
 mod capture;
+pub(crate) mod fuse;
 mod publish;
 mod selection;
 mod serve;
@@ -274,7 +275,7 @@ impl ClipboardBackend for Backend {
         &self,
         entries: &[crate::FileEntry],
         others: &[ClipData],
-        _contents: std::sync::Arc<dyn crate::FileContents>,
+        contents: std::sync::Arc<dyn crate::FileContents>,
         sensitivity: Sensitivity,
     ) -> Result<u64, ClipboardError> {
         // X11 transfers are path based; content is read by the pasting app.
@@ -286,7 +287,11 @@ impl ClipboardBackend for Backend {
             // A non-normal sensitivity still contributes its marker targets.
             binding::from_items(others, sensitivity)?
         };
-        virtual_files::add(&mut binding, &virtual_files::top_paths(entries));
+        let share = contents.namespace().and_then(fuse::share_for);
+        virtual_files::add(
+            &mut binding,
+            &virtual_files::top_paths(entries, share.as_deref()),
+        );
         if binding.targets.is_empty() {
             return Err(ClipboardError::Unsupported);
         }

@@ -37,6 +37,9 @@ x11-dl = "2.21"
 libc = "0.2"
 # Clipboard identity keys never read payload bytes.
 sha2 = "0.10"
+# Read-only FUSE3 bridge serving remote namespaces to local file consumers.
+# default-features off: no libfuse link, mounting goes through fusermount3.
+fuser = { version = "0.19", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

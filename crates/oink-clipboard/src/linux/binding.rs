@@ -101,7 +101,7 @@ pub(crate) fn from_items(items: &[ClipData], sensitivity: Sensitivity) -> Result
     }
     for item in items {
         if let ClipData::Files(entries) = item {
-            virtual_files::add(&mut binding, &virtual_files::top_paths(entries));
+            virtual_files::add(&mut binding, &virtual_files::top_paths(entries, None));
         }
     }
     if binding.targets.is_empty() {
@@ -166,7 +166,11 @@ pub(crate) fn from_spec(spec: &NativeSpec) -> Result<Binding, ClipboardError> {
             }
         }
     }
-    virtual_files::add(&mut binding, &virtual_files::top_paths(&spec.files));
+    let share = spec.contents.namespace().and_then(crate::linux::fuse::share_for);
+    virtual_files::add(
+        &mut binding,
+        &virtual_files::top_paths(&spec.files, share.as_deref()),
+    );
     if binding.targets.is_empty() {
         return Err(ClipboardError::Unsupported);
     }

@@ -174,9 +174,12 @@ class FramingTests(unittest.TestCase):
                  'linux_phase5_files_peer.c',
                  'linux_phase5_files_scenarios.py',
                  'linux_phase5_dnd_scenarios.py',
+                 'linux_phase5_fuse_scenarios.py',
+                 'test_linux_fuse_scenarios.py',
                  'crates/oink-clipboard/examples/phase5_clipboard_probe.rs',
                  'crates/oink-clipboard/examples/phase5_files_probe.rs',
-                 'crates/oink-clipboard/examples/phase5_dnd_probe.rs')
+                 'crates/oink-clipboard/examples/phase5_dnd_probe.rs',
+                 'crates/oink-clipboard/examples/phase5_fuse_probe.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)
