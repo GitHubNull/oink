@@ -5,7 +5,7 @@ use super::{Provider, guarded, unavailable};
 use crate::model::{Inventory, NativeFormat, Representation, RepresentationData, Unavailable};
 #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
 use crate::model::{ContentItem, StandardFormat};
-#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
 use oink_foundation::clipboard::ClipPlatform;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -71,7 +71,7 @@ fn wide(bytes: &[u8]) -> io::Result<String> {
 fn utf8(bytes: &[u8]) -> io::Result<String> {
     String::from_utf8(bytes.to_vec()).map_err(|_| invalid())
 }
-fn native(format: &NativeFormat, bytes: &[u8]) -> io::Result<Link> {
+pub(crate) fn native(format: &NativeFormat, bytes: &[u8]) -> io::Result<Link> {
     if bytes.len() > MAX_SOURCE_BYTES {
         return Err(unavailable(Unavailable::LimitExceeded));
     }
@@ -89,6 +89,20 @@ fn native(format: &NativeFormat, bytes: &[u8]) -> io::Result<Link> {
             #[cfg(not(windows))]
             let text = utf8(bytes)?;
             (text, name.as_str())
+        }
+        NativeFormat::LinuxAtom(name) if name == "text/uri-list" => {
+            // ICCCM-style URI lists: comments start with '#', one URI per line.
+            // Oink's URL item carries exactly one URL; file lists are files.
+            let text = utf8(bytes)?;
+            let mut lines = text
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'));
+            let url = lines.next().ok_or_else(invalid)?.to_owned();
+            if lines.next().is_some() || url.starts_with("file:") {
+                return Err(unavailable(Unavailable::Unsupported));
+            }
+            (url, name.as_str())
         }
         _ => return Err(unavailable(Unavailable::Unsupported)),
     };
@@ -192,7 +206,9 @@ pub(crate) fn names(item: &ContentItem, target: ClipPlatform) -> Vec<String> {
     let mut names = match target {
         ClipPlatform::Mac => vec!["public.url"],
         ClipPlatform::Windows => vec!["UniformResourceLocatorW", "UniformResourceLocator"],
-        ClipPlatform::Linux | ClipPlatform::Unknown => return Vec::new(),
+        // X11 has one portable URL target; titles stay in the oink:url/1 wire item.
+        ClipPlatform::Linux => return vec!["text/uri-list".into()],
+        ClipPlatform::Unknown => return Vec::new(),
     };
     if has_title {
         names.push(if target == ClipPlatform::Mac {
@@ -218,7 +234,7 @@ pub(crate) fn names(item: &ContentItem, target: ClipPlatform) -> Vec<String> {
     names.into_iter().map(str::to_owned).collect()
 }
 impl Link {
-    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
     fn anchor(&self) -> io::Result<String> {
         fn escape(value: &str) -> String {
             value
@@ -236,7 +252,7 @@ impl Link {
         self.validate()?;
         serde_json::to_vec(self).map_err(|_| invalid())
     }
-    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
     pub(crate) fn decode(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() > MAX_WIRE_BYTES {
             return Err(unavailable(Unavailable::LimitExceeded));
@@ -252,7 +268,7 @@ impl Link {
         }
         Ok(())
     }
-    #[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
     pub(crate) fn render(&self, target: ClipPlatform, name: &str) -> io::Result<Vec<u8>> {
         self.validate()?;
         match (target, name) {
@@ -270,15 +286,16 @@ impl Link {
                 .as_ref()
                 .map(|s| to_wide(&format!("{}\n{}", self.url, s)))
                 .ok_or_else(invalid),
+            (ClipPlatform::Linux, "text/uri-list") => Ok(format!("{}\r\n", self.url).into_bytes()),
             _ => Err(unavailable(Unavailable::Unsupported)),
         }
     }
 }
-#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
 fn to_wide(text: &str) -> Vec<u8> {
     text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes).collect()
 }
-#[cfg(any(target_os = "macos", windows, all(test, debug_assertions)))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", all(test, debug_assertions)))]
 pub(crate) fn ansi(text: &str) -> io::Result<Vec<u8>> {
     #[cfg(windows)]
     {

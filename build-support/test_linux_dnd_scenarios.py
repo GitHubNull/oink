@@ -167,9 +167,14 @@ class FramingTests(unittest.TestCase):
                  'linux_phase3_w3_probe.py', 'linux_phase3_tray_probe.py',
                  'linux_phase4_input_probe.c', 'linux_phase4_overlay_probe.c',
                  'linux_phase4_wallpaper_probe.py', 'linux_phase4_load.py',
-                 'linux_sni_watcher.py', 'fake_logind_service.py')
+                 'linux_sni_watcher.py', 'fake_logind_service.py',
+                 'linux_phase5_selection_peer.c',
+                 'linux_phase5_clipboard_scenarios.py',
+                 'crates/oink-clipboard/examples/phase5_clipboard_probe.rs')
+        root = Path(__file__).resolve().parent.parent
         for name in names:
-            lines = Path(__file__).with_name(name).read_text().splitlines()
+            path = root / name if '/' in name else Path(__file__).with_name(name)
+            lines = path.read_text().splitlines()
             with self.subTest(name=name):
                 self.assertLessEqual(len(lines), 500)
                 self.assertTrue(all(line == line.rstrip() for line in lines))

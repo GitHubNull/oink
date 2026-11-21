@@ -30,6 +30,14 @@ png = "0.18"
 # Native content transfers run on ordinary background tasks.
 tokio.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# ICCCM selection ownership, XFixes observation and property transfers.
+x11-dl = "2.21"
+# Wake pipes for the owner/observer event loops.
+libc = "0.2"
+# Clipboard identity keys never read payload bytes.
+sha2 = "0.10"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 block2 = "0.6"

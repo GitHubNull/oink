@@ -3266,6 +3266,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -3274,6 +3275,7 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-sys 0.61.2",
+ "x11-dl",
 ]
 
 [[package]]
