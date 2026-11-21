@@ -1034,6 +1034,8 @@ async fn clipboard_file_operation_interruption_retains_binding_and_reopens_at_re
         },
         platform: if cfg!(target_os = "macos") {
             ClipPlatform::Mac
+        } else if cfg!(target_os = "linux") {
+            ClipPlatform::Linux
         } else {
             ClipPlatform::Windows
         },
@@ -1166,6 +1168,8 @@ fn large_clipboard_offer(origin: DeviceId, sequence: u64) -> dto::ClipboardOffer
         },
         platform: if cfg!(target_os = "macos") {
             ClipPlatform::Mac
+        } else if cfg!(target_os = "linux") {
+            ClipPlatform::Linux
         } else {
             ClipPlatform::Windows
         },
@@ -1179,6 +1183,8 @@ fn large_clipboard_offer(origin: DeviceId, sequence: u64) -> dto::ClipboardOffer
                     id: RepresentationId(n + 1),
                     format: if cfg!(target_os = "macos") {
                         NativeFormat::Mac(format!("org.oink.test.item-{n}"))
+                    } else if cfg!(target_os = "linux") {
+                        NativeFormat::LinuxAtom(format!("org.oink.test.item-{n}"))
                     } else {
                         NativeFormat::WindowsRegistered(format!("Oink Test Item {n}"))
                     },

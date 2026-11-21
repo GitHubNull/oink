@@ -67,6 +67,8 @@ async fn scenario() {
         },
         platform: if cfg!(target_os = "macos") {
             ClipPlatform::Mac
+        } else if cfg!(target_os = "linux") {
+            ClipPlatform::Linux
         } else {
             ClipPlatform::Windows
         },
@@ -78,6 +80,8 @@ async fn scenario() {
                 id: RepresentationId(1),
                 format: if cfg!(target_os = "macos") {
                     NativeFormat::Mac("example.test.raw".into())
+                } else if cfg!(target_os = "linux") {
+                    NativeFormat::LinuxAtom("Oink Test Raw".into())
                 } else {
                     NativeFormat::WindowsRegistered("Oink Test Raw".into())
                 },

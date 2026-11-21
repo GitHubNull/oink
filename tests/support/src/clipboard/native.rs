@@ -16,6 +16,8 @@ use std::{
 fn platform() -> ClipPlatform {
     if cfg!(target_os = "macos") {
         ClipPlatform::Mac
+    } else if cfg!(target_os = "linux") {
+        ClipPlatform::Linux
     } else {
         ClipPlatform::Windows
     }
@@ -23,14 +25,17 @@ fn platform() -> ClipPlatform {
 fn format(name: &str) -> NativeFormat {
     match platform() {
         ClipPlatform::Mac => NativeFormat::Mac(name.into()),
+        ClipPlatform::Linux => NativeFormat::LinuxAtom(name.into()),
         _ => NativeFormat::WindowsRegistered(name.into()),
     }
 }
 fn name(format: &NativeFormat) -> String {
     match format {
-        NativeFormat::Mac(n) | NativeFormat::WindowsRegistered(n) | NativeFormat::Unknown(n) => n.clone(),
+        NativeFormat::Mac(n)
+        | NativeFormat::WindowsRegistered(n)
+        | NativeFormat::Unknown(n)
+        | NativeFormat::LinuxAtom(n) => n.clone(),
         NativeFormat::WindowsPredefined(n) => format!("win-cf:{n}"),
-        NativeFormat::LinuxAtom(n) => format!("linux-atom:{n}"),
     }
 }
 fn error<T>(_: T) -> ClipboardError {
@@ -240,6 +245,7 @@ pub(super) fn capture(fake: &FakeClipboard, _data: &Path) -> Result<oink_clipboa
             ClipData::Custom { platform, name, bytes } => (
                 match platform {
                     ClipPlatform::Mac => NativeFormat::Mac(name.clone()),
+                    ClipPlatform::Linux => NativeFormat::LinuxAtom(name.clone()),
                     _ => NativeFormat::WindowsRegistered(name.clone()),
                 },
                 oink_clipboard::formats::is_marker(*platform, name).then_some(StandardFormat::Privacy),

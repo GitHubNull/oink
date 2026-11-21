@@ -552,6 +552,8 @@ async fn pair_route_clipboard_layout_disconnect_scenario() {
     .await;
     let platform = if cfg!(target_os = "macos") {
         oink_foundation::clipboard::ClipPlatform::Mac
+    } else if cfg!(target_os = "linux") {
+        oink_foundation::clipboard::ClipPlatform::Linux
     } else {
         oink_foundation::clipboard::ClipPlatform::Windows
     };

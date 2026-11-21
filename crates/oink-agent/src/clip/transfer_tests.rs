@@ -45,6 +45,8 @@ fn rich_text_readers_do_not_create_a_waiting_file_transfer() {
                 ClipData::Custom {
                     platform: if cfg!(target_os = "macos") {
                         oink_foundation::clipboard::ClipPlatform::Mac
+                    } else if cfg!(target_os = "linux") {
+                        oink_foundation::clipboard::ClipPlatform::Linux
                     } else {
                         oink_foundation::clipboard::ClipPlatform::Windows
                     },
