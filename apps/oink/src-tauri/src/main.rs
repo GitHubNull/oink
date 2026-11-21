@@ -14,7 +14,7 @@ fn run() -> std::process::ExitCode {
     if let Some(code) = oink_agent::dispatch_raw_clip_guard() {
         return code;
     }
-    #[cfg(windows)]
+    #[cfg(any(target_os = "linux", windows))]
     if let Some(code) = oink_agent::paste_file::dispatch_shell_args() {
         return code;
     }

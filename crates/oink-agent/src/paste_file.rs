@@ -1,11 +1,14 @@
 //! Local shell integration; clipboard selection/conversion lives in oink-clipboard.
 use crate::config::{Settings, UiLanguage};
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use std::process::Command;
 use std::{
     io,
     path::{Path, PathBuf},
 };
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub fn language(value: UiLanguage) -> &'static str {
     #[cfg(target_os = "macos")]
@@ -78,9 +81,9 @@ fn checked(command: &mut Command) -> io::Result<std::process::Output> {
 /// Only a packaged backend registers shell hooks. Developer/isolated CLI runs
 /// may invoke save directly and never replace the installed app's registration.
 pub(crate) fn apply(settings: &Settings) -> io::Result<()> {
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let _ = settings;
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let exe = std::env::current_exe()?;
     #[cfg(target_os = "macos")]
     {
@@ -130,6 +133,8 @@ pub(crate) fn apply(settings: &Settings) -> io::Result<()> {
             language(settings.ui_language),
         )?;
     }
+    #[cfg(target_os = "linux")]
+    linux::apply(&exe, settings)?;
     Ok(())
 }
 
@@ -153,7 +158,7 @@ fn paste_menu_icon_value(dll: &Path, dark: bool) -> String {
     format!(r#""{}",-{}"#, dll.display(), resource)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn shell_destination(target: &Path) -> io::Result<PathBuf> {
     let metadata = target.metadata()?;
     if metadata.is_dir() {
@@ -367,8 +372,9 @@ pub fn save(destination: &Path, settings: &Settings) -> anyhow::Result<Vec<PathB
     )?)
 }
 
-/// GUI-subsystem entry used by Explorer, before starting Tauri or the backend.
-#[cfg(windows)]
+/// GUI-subsystem entry used by Explorer or Nemo, before starting Tauri or
+/// the backend.
+#[cfg(any(windows, target_os = "linux"))]
 pub fn dispatch_shell_args() -> Option<std::process::ExitCode> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.first().is_none_or(|s| s != "--paste-as-file") {
@@ -383,24 +389,41 @@ pub fn dispatch_shell_args() -> Option<std::process::ExitCode> {
     Some(match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            use windows::{
-                Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
-                core::PCWSTR,
-            };
-            let message: Vec<u16> = format!("{error:#}").encode_utf16().chain(Some(0)).collect();
-            let title: Vec<u16> = "Oink".encode_utf16().chain(Some(0)).collect();
-            // SAFETY: both UTF-16 strings are terminated and live for the modal call.
-            unsafe {
-                MessageBoxW(
-                    None,
-                    PCWSTR(message.as_ptr()),
-                    PCWSTR(title.as_ptr()),
-                    MB_OK | MB_ICONERROR,
-                );
-            }
+            report_error(&format!("{error:#}"));
             std::process::ExitCode::FAILURE
         }
     })
+}
+
+#[cfg(windows)]
+fn report_error(message: &str) {
+    use windows::{
+        Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+        core::PCWSTR,
+    };
+    let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Oink".encode_utf16().chain(Some(0)).collect();
+    // SAFETY: both UTF-16 strings are terminated and live for the modal call.
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(message.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn report_error(message: &str) {
+    eprintln!("Oink paste-as-file: {message}");
+    // Best effort: notify-send may be absent on minimal desktops; the stderr
+    // line above is the authoritative report.
+    let _ = Command::new("notify-send")
+        .args(["Oink", message])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 #[cfg(test)]
