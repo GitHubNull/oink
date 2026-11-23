@@ -54,6 +54,16 @@ pub fn outputs() -> Result<Vec<OutputDevice>, String> {
         .collect())
 }
 
+/// Concrete default source name, if the server reports one (symbolic
+/// placeholders are not a name and return None).
+pub(crate) fn default_source_name() -> Option<String> {
+    let conn = sys::connect("oink-enumerate").ok()?;
+    let defaults = query_server_defaults(&conn).ok()?;
+    let name = concrete(&defaults.1).map(str::to_string);
+    conn.close();
+    name
+}
+
 /// Concrete default sink name, if the server reports one (symbolic
 /// placeholders are not a name and return None).
 pub(crate) fn default_sink_name() -> Option<String> {

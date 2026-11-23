@@ -287,9 +287,12 @@ def run():
         for tool in ('pactl', 'pacat', 'parec', 'pw-cat', 'pw-link', 'pw-cli', 'pw-dump'):
             require(shutil.which(tool), 'missing_' + tool)
         initial_server, initial_defaults = epoch(), defaults()
+        # The shared harness also loads the microphone wave's test source
+        # (oink_test_mic + oink_test_source); the route wave only drives CAPTURE.
         report.check('private_initial_devices',
-                     [row['name'] for row in pulse('sinks')] == [CAPTURE]
-                     and [row['name'] for row in pulse('sources')] == [CAPTURE + '.monitor'])
+                     sorted(row['name'] for row in pulse('sinks')) == sorted([CAPTURE, 'oink_test_mic'])
+                     and sorted(row['name'] for row in pulse('sources'))
+                     == sorted([CAPTURE + '.monitor', 'oink_test_mic.monitor', 'oink_test_source']))
         report.check('capture_initially_unmuted', pulse('sinks')[0]['mute'] is False)
         base.emit('scope', audio='synthetic_only_in_memory', consumer_observer='registry_plus_pulse',
                   unknown='fail_closed', service_restart='not_exercised',
@@ -316,14 +319,18 @@ def run():
                              before=initial_defaults, after=defaults())
                 report.check('private_services_not_restarted', epoch() == initial_server)
                 report.check('private_devices_restored', bool(base.wait(
-                    lambda: [row['name'] for row in pulse('sinks')] == [CAPTURE]
-                    and [row['name'] for row in pulse('sources')] == [CAPTURE + '.monitor'])))
+                    lambda: sorted(row['name'] for row in pulse('sinks')) == sorted([CAPTURE, 'oink_test_mic'])
+                    and sorted(row['name'] for row in pulse('sources'))
+                    == sorted([CAPTURE + '.monitor', 'oink_test_mic.monitor', 'oink_test_source']))))
                 report.check('no_owned_children_alive', rig is None or
                              all(child.poll() is not None for child in rig.children))
                 report.check('no_owned_threads_alive', rig is None or
                              all(not pump.thread.is_alive() for pump in rig.pumps))
-                report.check('no_streams_leaked', not pulse('source-outputs')
-                             and not pulse('sink-inputs'))
+                # Module-owned record streams are permanent harness fixtures
+                # (the oink_test_source remap source); leaks are client-owned.
+                report.check('no_streams_leaked', not [
+                    row for row in pulse('source-outputs') if row.get('owner_module') is None
+                ] and not pulse('sink-inputs'))
             except Exception as error:
                 cleanup_errors.append(('post_cleanup', type(error).__name__))
                 base.emit('cleanup_error', resource='post_cleanup', error=type(error).__name__)

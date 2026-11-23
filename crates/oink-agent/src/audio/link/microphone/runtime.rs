@@ -60,6 +60,7 @@ impl Runtime {
     fn selected_input_fault(&self) -> Option<dto::ResourceFaultCode> {
         let selected = self.selected.as_ref()?;
         if selected.ends_with(mic::MAC_INPUT_UID)
+            || selected.ends_with(mic::LINUX_INPUT_UID)
             || self
                 .inputs
                 .iter()
@@ -261,7 +262,12 @@ impl Runtime {
                 Ok(mic::VirtualOutput::Ready { render_id, .. }) => Some(render_id),
                 _ => None,
             };
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "linux")]
+            let output = match mic::virtual_output() {
+                Ok(mic::VirtualOutput::Ready { render_id, .. }) => Some(render_id),
+                _ => None,
+            };
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             self.update_output(owner, output);
             self.revision = revision;
             self.discovered = true;

@@ -5,11 +5,17 @@
 pub(crate) mod capture;
 pub(crate) mod devices;
 pub(crate) mod enumerate;
+pub(crate) mod mic_demand;
+pub(crate) mod mic_enumerate;
+pub(crate) mod mic_virtual;
+pub(crate) mod microphone;
 pub(crate) mod playback;
 pub(crate) mod sys;
 
 /// Unified output identifier prefix; the suffix is the PulseAudio sink name.
 pub(crate) const OUTPUT_PREFIX: &str = "pulse:sink:";
+/// Unified input identifier prefix; the suffix is the PulseAudio source name.
+pub(crate) const INPUT_PREFIX: &str = "pulse:source:";
 /// Oink-private nodes are invisible to enumeration and demand detection.
 pub(crate) const PRIVATE_PREFIX: &str = "oink_";
 

@@ -5,7 +5,7 @@ use dto::{ControlFailure as Failure, LocalOption};
 #[derive(Default)]
 pub(super) struct State {
     pub native: bool,
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     runtime: Option<Runtime>,
     group: Option<GroupId>,
     claims: Claims,
@@ -196,20 +196,20 @@ impl Owner {
     }
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod runtime;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use runtime::Runtime;
 impl Owner {
     pub(super) fn microphone_inputs(&self) -> Vec<oink_audio::microphone::InputDevice> {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(runtime) = &self.microphone.runtime {
             return runtime.selectable_inputs();
         }
         Vec::new()
     }
     pub(super) fn microphone_active(&self) -> bool {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(runtime) = &self.microphone.runtime {
             return runtime.active();
         }
@@ -220,9 +220,9 @@ impl Owner {
         at_ms: u64,
     ) -> [Option<oink_audio::sink::DropoutBucket>; oink_audio::sink::QUALITY_SECONDS] {
         let output = self.output_quality.snapshot(at_ms);
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         let mut output = output;
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(runtime) = &self.microphone.runtime {
             for bucket in runtime.output_quality(at_ms).into_iter().flatten() {
                 let index = (bucket.at_ms / 1000) as usize % output.len();
@@ -236,23 +236,23 @@ impl Owner {
         output
     }
     pub(super) fn microphone_quality(&self, now: Instant) -> Option<crate::audio_quality::Observation> {
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         let _ = now;
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(runtime) = &self.microphone.runtime {
             return runtime.quality(now);
         }
         None
     }
     pub(super) fn microphone_deadline(&self) -> Option<Instant> {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(runtime) = &self.microphone.runtime {
             return runtime.deadline();
         }
         None
     }
     pub(super) fn tick_microphone(&mut self) {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if !self.driver_change_active() && self.microphone.native {
             let mut runtime = self.microphone.runtime.take().unwrap_or_default();
             runtime.tick(self);
@@ -260,23 +260,23 @@ impl Owner {
         }
     }
     pub(super) fn refresh_microphone(&mut self) {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(mut runtime) = self.microphone.runtime.take() {
             runtime.refresh(self);
             self.microphone.runtime = Some(runtime);
         }
     }
     pub(super) fn stop_microphone(&mut self) {
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if let Some(mut runtime) = self.microphone.runtime.take() {
             runtime.stop(self);
             self.microphone.runtime = Some(runtime);
         }
     }
     pub(super) fn microphone_message(&mut self, peer: DeviceId, message: &Message) {
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         let _ = (peer, message);
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
         if !self.driver_change_active() && self.microphone.native {
             let mut runtime = self.microphone.runtime.take().unwrap_or_default();
             runtime.message(self, peer, message);

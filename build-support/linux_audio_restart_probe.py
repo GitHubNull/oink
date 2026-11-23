@@ -234,8 +234,11 @@ class Generation:
                     'private_audio_socket_missing')
         self.server, self.before = runtime.epoch(), runtime.defaults()
         sinks, sources = base.pulse('sinks'), base.pulse('sources')
-        require([row['name'] for row in sinks] == ['oink_test']
-                and [row['name'] for row in sources] == ['oink_test.monitor']
+        # The shared harness also loads the microphone wave's test source
+        # (oink_test_mic + oink_test_source); this wave only drives oink_test.
+        require(sorted(row['name'] for row in sinks) == sorted(['oink_test', 'oink_test_mic'])
+                and sorted(row['name'] for row in sources)
+                == sorted(['oink_test.monitor', 'oink_test_mic.monitor', 'oink_test_source'])
                 and sinks[0]['mute'] is False, 'unexpected_private_devices')
         self.source_index = sources[0]['index']
         dump = base.graph()
@@ -243,8 +246,12 @@ class Generation:
         sink = runtime.named(nodes, 'oink_test')
         require(len(sink) == 1, 'private_sink_identity_missing')
         self.source_key = policy.node_identity(sink[0], self.server)
-        require(not base.pulse('source-outputs') and not base.pulse('sink-inputs')
+        # Module-owned record streams and unregistered stream nodes are
+        # permanent harness fixtures (the oink_test_source remap source).
+        require(not [row for row in base.pulse('source-outputs') if row.get('owner_module') is None]
+                and not base.pulse('sink-inputs')
                 and not any(base.props(obj).get('media.class', '').startswith('Stream/')
+                            and base.props(obj).get('object.register', True) is not False
                             for obj in nodes), 'old_stream_survived_restart')
         require(runtime.epoch() == self.server, 'startup_epoch_changed')
 

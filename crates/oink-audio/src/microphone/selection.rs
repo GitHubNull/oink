@@ -41,7 +41,10 @@ impl DefaultInputHistory {
         let id = explicit
             .or_else(|| self.current.as_ref().map(|input| input.id.as_str()))
             .ok_or(SelectionError::Unavailable)?;
-        if explicit.is_some() && (id.ends_with(super::MAC_INPUT_UID) || id.ends_with("com.across.microphone.input.v1"))
+        if explicit.is_some()
+            && (id.ends_with(super::MAC_INPUT_UID)
+                || id.ends_with(super::LINUX_INPUT_UID)
+                || id.ends_with("com.across.microphone.input.v1"))
         {
             return Err(SelectionError::Loopback);
         }

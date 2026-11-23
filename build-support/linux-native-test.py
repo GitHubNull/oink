@@ -72,6 +72,8 @@ context.modules = [
 pulse.properties = { server.address = [ "unix:SOCKET_PATH" ] }
 pulse.cmd = [
     { cmd = "load-module" args = "module-null-sink sink_name=oink_test" }
+    { cmd = "load-module" args = "module-null-sink sink_name=oink_test_mic" }
+    { cmd = "load-module" args = "module-remap-source source_name=oink_test_source master=oink_test_mic.monitor" }
 ]
 '''
 
@@ -234,9 +236,12 @@ class Session:
         self.wait_ready(lambda: self.run(['pactl', 'info'], timeout=1))
         sources = json.loads(self.run(['pactl', '-f', 'json', 'list', 'sources']).stdout)
         sinks = json.loads(self.run(['pactl', '-f', 'json', 'list', 'sinks']).stdout)
-        if ([sink['name'] for sink in sinks] != ['oink_test']
-                or [source['name'] for source in sources] != ['oink_test.monitor']):
-            raise RuntimeError('Private audio service did not expose only the test sink/monitor')
+        sink_names = sorted(s['name'] for s in sinks)
+        source_names = sorted(s['name'] for s in sources)
+        if sink_names != ['oink_test', 'oink_test_mic'] or source_names != [
+                'oink_test.monitor', 'oink_test_mic.monitor', 'oink_test_source']:
+            raise RuntimeError(
+                f'Private audio service exposed unexpected nodes: sinks={sink_names} sources={source_names}')
 
     def execute(self, command, timeout):
         process = subprocess.Popen(command, env=self.env, start_new_session=True)

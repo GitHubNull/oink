@@ -3,14 +3,18 @@
 //! Policy, demand leases and media transport belong to the agent's microphone actor.
 #[cfg(any(target_os = "macos", windows))]
 mod capture;
-mod resample;
+pub(crate) mod resample;
 mod selection;
 pub mod session;
+#[cfg(target_os = "linux")]
+pub use crate::linux::microphone::{DemandMonitor, inputs, virtual_output};
 pub use selection::{DefaultInputHistory, InputCandidate, InputSelection, SelectionError};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 mod windows_default;
+#[cfg(target_os = "linux")]
+pub use crate::linux::microphone::{Capture, default_input, input_candidates, switch_default_input};
 #[cfg(any(target_os = "macos", windows))]
 pub use capture::{Capture, default_input, input_candidates, inputs, switch_default_input, virtual_output};
 #[cfg(target_os = "macos")]
@@ -49,14 +53,17 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const FRAMES_PER_BLOCK: usize = 240;
 pub const MAC_INPUT_UID: &str = "com.hachiwii.oink.microphone.input.v1";
 pub const MAC_FEED_UID: &str = "com.hachiwii.oink.microphone.feed.v1";
+/// The virtual recording endpoint carries this UID on every platform so the
+/// loopback guard recognizes our own forwarding source by ID.
+pub const LINUX_INPUT_UID: &str = "org.oink.microphone.input.v1";
 
 /// Read-only. In particular, this never requests AVFoundation authorization.
 pub fn permission() -> Permission {
     #[cfg(target_os = "macos")]
     return macos::permission();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     return Permission::SystemControlled;
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     Permission::Unsupported
 }
 
@@ -83,11 +90,11 @@ pub fn request_permission() -> Result<(), String> {
     Err("microphone authorization is managed by the operating system".into())
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub fn inputs() -> Result<Vec<InputDevice>, String> {
     Ok(Vec::new())
 }
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub fn virtual_output() -> Result<VirtualOutput, String> {
     Ok(VirtualOutput::Unsupported)
 }

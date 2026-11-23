@@ -190,7 +190,11 @@ class FramingTests(unittest.TestCase):
                  'linux_audio_playback_probe.py',
                  'crates/oink-audio/examples/linux_probe_playback.rs',
                  'linux_audio_volume_probe.py',
-                 'crates/oink-audio/examples/linux_probe_volume.rs')
+                 'crates/oink-audio/examples/linux_probe_volume.rs',
+                 'linux_audio_microphone_probe.py',
+                 'crates/oink-audio/examples/linux_probe_microphone.rs',
+                 'crates/oink-audio/src/linux/mic_demand.rs',
+                 'crates/oink-audio/src/linux/mic_enumerate.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)
