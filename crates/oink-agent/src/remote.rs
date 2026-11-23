@@ -653,6 +653,9 @@ impl AgentApi for RemoteApi {
     fn microphone_plugin_status(&self) -> ApiResult<crate::microphone_plugin::MicrophonePluginStatus> {
         self.call(Request::MicrophonePluginStatus)
     }
+    fn set_microphone_input(&self, input: Option<String>) -> ApiResult<()> {
+        self.call(Request::SetMicrophoneInput { input })
+    }
     fn microphone_plugin_action(
         &self,
         action: crate::microphone_plugin::Action,
