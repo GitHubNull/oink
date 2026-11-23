@@ -362,8 +362,10 @@ class LifecycleTests(OfflineTest):
         dump, _, _ = observation()
         self.replace(base, 'graph', return_value=dump)
         self.replace(base, 'pulse', side_effect=lambda kind: {
-            'sinks': [{'name': 'oink_test', 'mute': False}],
-            'sources': [{'name': 'oink_test.monitor', 'index': 10}],
+            'sinks': [{'name': 'oink_test', 'mute': False}, {'name': 'oink_test_mic', 'mute': False}],
+            'sources': [{'name': 'oink_test.monitor', 'index': 10},
+                        {'name': 'oink_test_mic.monitor', 'index': 11},
+                        {'name': 'oink_test_source', 'index': 12}],
             'source-outputs': [], 'sink-inputs': []}[kind])
         env = {'XDG_RUNTIME_DIR': '/private/runtime', 'PIPEWIRE_RUNTIME_DIR': '/private/runtime',
                'PIPEWIRE_REMOTE': 'oink-test', 'PULSE_SERVER': 'unix:/private/runtime/pulse'}

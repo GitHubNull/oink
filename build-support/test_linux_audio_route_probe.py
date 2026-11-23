@@ -300,8 +300,10 @@ class PlumbingTests(OfflineTest):
         self.replace(probe, 'defaults', side_effect=[initial, ('changed', 'changed'), initial]
                      if defaults_changed else None, return_value=initial)
         self.replace(probe, 'pulse', side_effect=lambda kind: {
-            'sinks': [{'name': 'oink_test', 'mute': False}],
-            'sources': [{'name': 'oink_test.monitor'}],
+            'sinks': [{'name': 'oink_test', 'mute': False}, {'name': 'oink_test_mic', 'mute': False}],
+            'sources': [{'name': 'oink_test.monitor'},
+                        {'name': 'oink_test_mic.monitor'},
+                        {'name': 'oink_test_source'}],
         }.get(kind, []))
         self.replace(base, 'wait', side_effect=lambda predicate, **kwargs: predicate())
 

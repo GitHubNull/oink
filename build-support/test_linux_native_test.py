@@ -320,7 +320,10 @@ class AudioTests(SafeCase):
 
     def test_private_audio_configs_disable_dbus_and_hardware_discovery(self):
         session = self.session()
-        start = self.start_audio(session, ['oink_test.monitor'], ['oink_test'])
+        start = self.start_audio(
+            session,
+            ['oink_test.monitor', 'oink_test_mic.monitor', 'oink_test_source'],
+            ['oink_test', 'oink_test_mic'])
         config = Path(session.env['PIPEWIRE_CONFIG_DIR'])
         self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o700)
         texts = [path.read_text() for path in config.glob('*.conf')]
@@ -332,15 +335,22 @@ class AudioTests(SafeCase):
         self.assertIn(str(session.root / 'runtime' / 'pulse-native'), pulse)
         self.assertNotIn('SOCKET_PATH', pulse)
         self.assertIn('module-null-sink sink_name=oink_test', pulse)
+        self.assertIn('module-null-sink sink_name=oink_test_mic', pulse)
+        self.assertIn('module-remap-source source_name=oink_test_source master=oink_test_mic.monitor',
+                      pulse)
         self.assertIn('autospawn = no', Path(session.env['PULSE_CLIENTCONFIG']).read_text())
         self.assertEqual({c.args[1][0] for c in start.call_args_list}, {'pipewire', 'pipewire-pulse'})
 
     def test_audio_rejects_missing_extra_duplicate_or_physical_endpoints(self):
-        for sources, sinks in (([], ['oink_test']), (['oink_test.monitor'], []),
-                               (['microphone'], ['oink_test']),
-                               (['oink_test.monitor', 'microphone'], ['oink_test']),
-                               (['oink_test.monitor'], ['oink_test', 'speakers']),
-                               (['oink_test.monitor'] * 2, ['oink_test'])):
+        all_sources = ['oink_test.monitor', 'oink_test_mic.monitor', 'oink_test_source']
+        all_sinks = ['oink_test', 'oink_test_mic']
+        for sources, sinks in (([], all_sinks), (all_sources, []),
+                               (['microphone'], all_sinks),
+                               (all_sources, ['oink_test']),
+                               (['oink_test.monitor', 'microphone'], all_sinks),
+                               (all_sources, ['oink_test', 'speakers']),
+                               (all_sources * 2, all_sinks),
+                               (all_sources, all_sinks * 2)):
             with self.subTest(sources=sources, sinks=sinks):
                 with self.assertRaises(RuntimeError):
                     self.start_audio(self.session(), sources, sinks)
