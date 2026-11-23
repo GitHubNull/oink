@@ -534,3 +534,10 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - 新探针 `linux_audio_playback_probe.py`（287 行）：产品全链路（Opus 编码 → sink 解码 → pulse 播放）440Hz 端到端；私有栈探针层接线 `route('oink-playback','oink_test')` + monitor 录音 `route('oink_test','oink-playback-rec')`（1s 窗口 RMS/nonzero 计数），录音器保活至示例结束（登记限制②）。示例 `linux_probe_playback.rs`（129 行）。两者纳入 500 行门禁名单。
 - 原生证据（私有栈，`w3/playback.log` + 两次复跑）：静音→440Hz（−15 dBFS，编码链合理）→静音有序窗、nonzero 44866–95998/96000、零错误、零 underrun、干净 finish，3/3 全绿。门禁：fmt/clippy rc=0，全量测试 3297 passed、failed-names 与 12 条基线逐字一致，离线 Python 330 OK，audio 套件回归 16/16 绿（`w3/audio-suite.log`）。
 - 附带修正：W1 的 Cargo.toml 依赖改动（cpal 收窄 macOS/Windows + Linux 加 libpulse-binding 2.30）此前漏提交（W1/W2 提交 standalone 不可复现构建），本波随 W3 一并提交。
+
+### W4 音量端点与设备事件（本地提交，未推送）
+
+- `oink-audio` 新增 `volume/linux.rs`（206 行）：`pulse:sink:<name>` 音量/mute 端点，impl 平台无关 `volume::Endpoint` 契约。订阅回调只置 changed latch + 调 owner wake（不枚举不解释 ID，照抄 Windows 红线）；read 走 `get_sink_info_by_name` 实测回读（avg 音量→百分比线性映射、>100% 增益可表示）；write 先查声道数再 `set_sink_volume_by_name` + `set_sink_mute_by_name`，双 ACK 才成功；context 非 Ready（服务重启）一律 fail-closed Unavailable；不存在的 sink 读返回 Unavailable，绝不猜测。Drop 手工 disconnect+stop（`&mut self` 不能移交 Connection 所有权）。
+- 接线：`volume::open` cfg 放开 Linux；agent `SystemAudio::volume_endpoint` 平台无关已通。设备拔插/切换经 `devices.rs` 订阅流（任何 SINK/SOURCE/SERVER 事件 → `device_notifications::invalidate()`，SERVER 另 bump `service_generation`），消费者（agent 迁移流）按 generation/revision 失效重建——两代恢复由 audio-restart 套件实证。
+- 新探针 `linux_audio_volume_probe.py`（123 行）+ 示例 `linux_probe_volume.rs`（102 行），纳入 500 行门禁名单。探针用 pactl 做宿主侧对拍：端点写 40%+mute ↔ pactl 实测一致；外部 `pactl set-sink-volume 55%` 经订阅 latch+wake 观测（wakes≥1）且回读 55/false；缺失 sink fail-closed；原值恢复后端点与 pactl 双确认。
+- 原生证据（私有栈，`w4/volume.log` + 复跑）：10/10 checks 两轮全绿。套件回归：audio 16/16、audio-route（含 no_streams_leaked）、audio-restart 两代恢复 generations=2 全绿（`w4/audio-{suite,route,restart}.log`）。门禁：fmt/clippy rc=0，全量测试 3298 passed（+1 新映射单测）、failed-names 与 12 条基线逐字一致，离线 Python 全量 OK。
