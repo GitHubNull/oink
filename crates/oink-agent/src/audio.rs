@@ -88,9 +88,18 @@ impl CaptureStream for Capture {
         }
     }
     fn finish(&mut self) -> Option<String> {
-        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             Capture::finish(self)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Join the worker for its side effect, but never surface a dead
+            // monitor stream as a cleanup failure: that classification feeds
+            // the macOS endpoint-mute recovery journal and would wedge Linux
+            // in mute_release_unconfirmed after an ordinary service bounce.
+            let _ = Capture::finish(self);
+            None
         }
         #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
@@ -238,6 +247,12 @@ trait AudioPlatform: Send + Sync {
     fn capture_cleanup_failed(&self) -> bool {
         false
     }
+    /// Sources on this platform recover from native stream failures by
+    /// themselves (service restart, device bounce). macOS/Windows pin recovery
+    /// to explicit default-following or permission events instead.
+    fn supports_source_retry(&self) -> bool {
+        false
+    }
     fn supports_default_following(&self) -> bool {
         false
     }
@@ -340,6 +355,9 @@ impl AudioPlatform for SystemAudio {
         {
             false
         }
+    }
+    fn supports_source_retry(&self) -> bool {
+        cfg!(target_os = "linux")
     }
     fn supports_default_following(&self) -> bool {
         cfg!(target_os = "macos")

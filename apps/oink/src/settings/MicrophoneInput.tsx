@@ -14,9 +14,11 @@ export function MicrophoneInput() {
   const missing=selected!==null&&!inputs.some(input=>input.id===selected);
   const save=async(input:string|null)=>{
     setPending(true);
-    try { await api.setMicrophoneInput(input); await agent.query('audio',api.audioStatus); }
+    try { await api.setMicrophoneInput(input); }
     catch {toast.danger({title:tr('无法更改麦克风设置')});}
     finally {setPending(false);}
+    // The selection outlives a failed refresh; the next status poll reconciles.
+    void agent.query('audio',api.audioStatus).catch(()=>undefined);
   };
   return <Select size="sm" aria-label={tr('共享的麦克风')} disabled={pending||!audio}
     value={selected??'default'} onChange={value=>{void save(value==='default'?null:value);}}

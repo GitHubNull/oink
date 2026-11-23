@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 
 const PLAYBACK_RETRY_INITIAL: Duration = Duration::from_millis(250);
 const PLAYBACK_RETRY_MAX: Duration = Duration::from_secs(5);
+const SOURCE_RETRY_INITIAL: Duration = Duration::from_secs(2);
+const SOURCE_RETRY_MAX: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub(crate) struct Handle {
@@ -529,6 +531,8 @@ struct Owner {
     playback_failed: bool,
     playback_retry_at: Option<Instant>,
     playback_retry_delay: Duration,
+    source_retry_at: Option<Instant>,
+    source_retry_delay: Duration,
     retry_default: Option<Option<String>>,
     device_revision: Option<u64>,
     service_generation: Option<u64>,
@@ -717,6 +721,8 @@ impl Owner {
             playback_failed: false,
             playback_retry_at: None,
             playback_retry_delay: PLAYBACK_RETRY_INITIAL,
+            source_retry_at: None,
+            source_retry_delay: SOURCE_RETRY_INITIAL,
             retry_default: None,
             device_revision: platform.device_revision(),
             service_generation: platform.service_generation(),
@@ -937,9 +943,18 @@ impl Owner {
         }
     }
     fn fail_source(&mut self, error: String) {
+        // Linux sources recover by themselves after a pulse service bounce;
+        // permission failures stay pinned until an explicit grant everywhere.
+        let retryable = self.platform.supports_source_retry() && !error.starts_with("capture_permission_");
         self.stop_source();
         self.error = Some(error);
         self.source_failed = true;
+        if retryable {
+            self.source_retry_at = Some(Instant::now() + self.source_retry_delay);
+            self.source_retry_delay = (self.source_retry_delay * 2).min(SOURCE_RETRY_MAX);
+        } else {
+            self.source_retry_at = None;
+        }
     }
     fn prepare_driver_change(&mut self, active: Arc<AtomicBool>) -> Result<(), String> {
         if !active.load(Ordering::Acquire) {
@@ -1726,6 +1741,23 @@ impl Owner {
         if table.load().to.is_empty() && !self.provisional && !switching {
             // M0 may be reopening independently while the link stays ready. Restore
             // local sound; a control-stream fault preserves the selected exit.
+            if self.source_failed
+                && self.platform.supports_source_retry()
+                && self.source_retry_at.is_none_or(|at| now >= at)
+            {
+                // The media route drained when the native source died, so a
+                // plain reopen has no route. Retire the session and re-run the
+                // exit preparation; AudioPrepared re-selects the format and
+                // the next tick reopens the source.
+                self.source_failed = false;
+                self.error = None;
+                self.source_retry_at = None;
+                self.source_session.retire();
+                self.selected = None;
+                if let Some(peer) = self.resolution.owner() {
+                    self.prepare_peer(peer);
+                }
+            }
             let _ = self.release_capture();
             return;
         }
@@ -1734,7 +1766,14 @@ impl Owner {
             return;
         }
         if self.source_failed {
-            return;
+            // Retryable platforms (pulse) re-attempt the native source after a
+            // backoff; a persistent failure re-arms through fail_source.
+            if !self.platform.supports_source_retry() || self.source_retry_at.is_none_or(|at| now < at) {
+                return;
+            }
+            self.source_failed = false;
+            self.error = None;
+            self.source_retry_at = None;
         }
         if let Some(reason) = self.capture.as_ref().and_then(|capture| capture.restart_reason()) {
             self.restart_reason = Some(reason);
@@ -1844,6 +1883,7 @@ impl Owner {
                         self.mute_cleanup_error = None;
                     }
                     self.capture_watchdog.opened(now.max(Instant::now()));
+                    self.source_retry_delay = SOURCE_RETRY_INITIAL;
                     self.capture = Some(capture);
                     self.encoded = Some(output);
                     self.provisional = verify;

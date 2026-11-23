@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import {afterEach,beforeAll,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
-import {OinkProvider} from 'oink-ui';
+import {OinkProvider,Toaster} from 'oink-ui';
 import {agent} from '../api/store';
 import {api} from '../api/client';
 import type {AudioStatus} from '../api/types';
@@ -32,6 +32,17 @@ it('lists hardware and follow-default, saves through existing input option, and 
  fireEvent.click(screen.getByRole('combobox'));
  fireEvent.click(await screen.findByRole('option',{name:'跟随系统默认'}));
  await waitFor(()=>expect(write).toHaveBeenCalledWith(null));
+});
+it('keeps a saved selection silent when the follow-up status refresh fails',async()=>{
+ setLanguage('zh-Hans'); adopt(null);
+ const write=vi.spyOn(api,'setMicrophoneInput').mockResolvedValue(null);
+ vi.spyOn(api,'audioStatus').mockRejectedValue(new Error('synthetic refresh outage'));
+ const {container}=render(<OinkProvider><MicrophoneInput/><Toaster/></OinkProvider>);
+ fireEvent.click(screen.getByRole('combobox'));
+ fireEvent.click(await screen.findByRole('option',{name:input.name}));
+ await waitFor(()=>expect(write).toHaveBeenCalledWith(input.id));
+ expect(container.textContent).not.toContain('无法更改麦克风设置');
+ expect(document.body.textContent).not.toContain('无法更改麦克风设置');
 });
 it.each([['zh-Hans','跟随系统默认','麦克风'],['en','Follow system default','microphone'],['ja','システムのデフォルトに従う','マイク'],['ko','시스템 기본값 따르기','마이크']] as const)('places the selector last and makes it searchable in %s',(lang,label,keyword)=>{
  setLanguage(lang);adopt(null);

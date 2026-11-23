@@ -38,6 +38,7 @@ struct State {
     playback_invalidated: bool,
     service_generation: Option<u64>,
     device_revision: Option<u64>,
+    supports_source_retry: bool,
     queries: usize,
     configuration_observer: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -242,6 +243,9 @@ impl AudioPlatform for Platform {
     }
     fn supports_default_following(&self) -> bool {
         lock(&self.0).follows_default
+    }
+    fn supports_source_retry(&self) -> bool {
+        lock(&self.0).supports_source_retry
     }
     fn default_output_id(&self) -> Option<String> {
         lock(&self.0).default_output.clone()
@@ -1439,6 +1443,57 @@ async fn keep_local_rebuilds_once_and_preserves_forwarding_claim() {
     assert!(running.owners[0].settings.forwarding_enabled);
     assert_eq!(running.owners[0].settings.forwarding_off_reason, None);
     assert_eq!(lock(&running.platforms[0].0).muted, [true, false, false]);
+    let sent = running.owners[0].sent.load(Ordering::Relaxed);
+    running.supply(0, 0.1);
+    assert!(running.owners[0].sent.load(Ordering::Relaxed) > sent);
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn retryable_source_failure_with_drained_route_reruns_exit_preparation() {
+    let mut running = Running::start(true).await;
+    lock(&running.platforms[0].0).supports_source_retry = true;
+    let exit = running.owners[0].resolution.owner().unwrap();
+    // The exit tore the media route down when the native source died, so the
+    // forward table drains before the retry comes due.
+    running.owners[0].streams.forget_preparation(exit);
+    assert!(running.owners[0].streams.forward_table().load().to.is_empty());
+    assert!(running.owners[0].source_session.offer().is_some());
+    running.owners[0].fail_source("pulse service bounced".into());
+    assert!(running.owners[0].source_failed);
+    let due = running.owners[0]
+        .source_retry_at
+        .expect("retryable failure arms the backoff");
+    // Before the backoff expires the failure must stay pinned with no re-offer.
+    running.owners[0].tick_source();
+    assert!(
+        running.owners[0].source_failed,
+        "a premature tick must not clear the failure"
+    );
+    assert!(
+        running.owners[0].source_session.offer().is_some(),
+        "a premature tick must not re-offer"
+    );
+    running.owners[0].tick_source_at(due);
+    assert!(!running.owners[0].source_failed);
+    assert!(running.owners[0].error.is_none());
+    assert!(
+        running.owners[0].source_session.prepared().is_none(),
+        "the drained route retires the accepted session before re-preparing"
+    );
+    assert!(
+        running.owners[0].selected.is_none(),
+        "the drained route drops the selected format before re-preparing"
+    );
+    // The fresh offer re-runs the handshake; AudioPrepared re-selects the
+    // format and the next ticks reopen the native source.
+    running
+        .until(|r| {
+            !r.owners[0].streams.forward_table().load().to.is_empty()
+                && r.owners[0].selected.is_some()
+                && r.owners[0].capture.is_some()
+        })
+        .await;
     let sent = running.owners[0].sent.load(Ordering::Relaxed);
     running.supply(0, 0.1);
     assert!(running.owners[0].sent.load(Ordering::Relaxed) > sent);
