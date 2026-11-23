@@ -5,6 +5,7 @@
 pub(crate) mod capture;
 pub(crate) mod devices;
 pub(crate) mod enumerate;
+pub(crate) mod playback;
 pub(crate) mod sys;
 
 /// Unified output identifier prefix; the suffix is the PulseAudio sink name.

@@ -526,3 +526,11 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - `OINK_CAPTURE_SOURCE` 校验（非空/无 NUL/≤512B）；无符号默认时 fail-closed 文案指引该逃逸口。`oink-agent` 接线：`SystemAudio.capture_encoded` Linux 臂、`CaptureStream` trait cfg 臂扩展（finish/default_output_changed/restart_reason）、`recovery_dir` cfg 含 Linux。
 - 原生证据（私有栈，`w2/capture.log`）：fail-closed 通过；3 尝试 × 8s 全存活（node_drop_stat dropped=0），440Hz 捕获 rms −11.7dBFS（三次一致），前静默/后静默 rms<−60、零捕获错误、干净 finish。阶段 2 audio 套件回归 16/16 绿（`w2/audio-suite.log`）。
 - 新探针 `linux_audio_capture_probe.py`（多次尝试证据累计 + 图接线 + stall 检测）+ 示例 `linux_probe_capture.rs`（callback_stats 计数器），已纳入 500 行门禁名单；`capture.rs` 496 行。
+
+### W3 NativePlayback 播放（本地提交，未推送）
+
+- `oink-audio` 新增 `linux/playback.rs`（384 行）：`connect_playback` 到 `pulse:sink:<name>`（绝不读改默认 sink），f32le/48k/stereo；write 回调拉取 `NativeRender::fill` → LE 字节 → `stream.write`，固定 scratch 零分配；`BufferAttr` tlength 按请求换算（None=6 周期，Some(0)=最小基线，Some(n) 钳 1–32 周期）、prebuf/minreq=1 周期、闲置字段 `u32::MAX`；Sink Removed 订阅 → `device_invalidated`；worker 控制循环检查 context+stream 状态；START_CORKED → READY → uncork（ACK 句柄保活）。
+- **根因实证（本波排障）**：① **write 回调必须在 `connect_playback` 之前安装**——播放请求是事件制，pipewire-pulse 在流变 ready 时发出初始 writable 请求，事后安装回调永远收不到（表现为 output callback stalled）；录音 read 回调晚装无碍（monitor 数据持续到达）。② 回调闭包持有 stream 的 Rc 克隆成环（stream↔回调）→ teardown 先 `set_write_callback(None)` 拆环再 drop stream，否则原生流永不释放。③ 探针侧教训：recorder 的 stderr 管道必须在终止进程后再读，否则 `.read()` 永远等 EOF 挂死探针。
+- 新探针 `linux_audio_playback_probe.py`（287 行）：产品全链路（Opus 编码 → sink 解码 → pulse 播放）440Hz 端到端；私有栈探针层接线 `route('oink-playback','oink_test')` + monitor 录音 `route('oink_test','oink-playback-rec')`（1s 窗口 RMS/nonzero 计数），录音器保活至示例结束（登记限制②）。示例 `linux_probe_playback.rs`（129 行）。两者纳入 500 行门禁名单。
+- 原生证据（私有栈，`w3/playback.log` + 两次复跑）：静音→440Hz（−15 dBFS，编码链合理）→静音有序窗、nonzero 44866–95998/96000、零错误、零 underrun、干净 finish，3/3 全绿。门禁：fmt/clippy rc=0，全量测试 3297 passed、failed-names 与 12 条基线逐字一致，离线 Python 330 OK，audio 套件回归 16/16 绿（`w3/audio-suite.log`）。
+- 附带修正：W1 的 Cargo.toml 依赖改动（cpal 收窄 macOS/Windows + Linux 加 libpulse-binding 2.30）此前漏提交（W1/W2 提交 standalone 不可复现构建），本波随 W3 一并提交。
