@@ -53,6 +53,8 @@ mod windows;
 mod windows_playback;
 #[cfg(windows)]
 pub(crate) mod windows_timer;
+#[cfg(target_os = "linux")]
+pub use linux::capture::Capture;
 #[cfg(target_os = "macos")]
 pub use macos::{Capture, MacCaptureOptions};
 #[cfg(windows)]
@@ -259,14 +261,18 @@ pub fn capture_capability() -> &'static str {
         "core_audio_tap_14_2"
     } else if cfg!(windows) {
         "wasapi_endpoint_loopback_journaled_mute_driver_dependent"
+    } else if cfg!(target_os = "linux") {
+        // Monitor capture takes no endpoint lease: sink mute would silence
+        // the monitor itself, so source mute is unavailable on Linux.
+        "pulse_monitor_no_endpoint_mute"
     } else {
         "unsupported"
     }
 }
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 #[derive(Debug)]
 pub struct Capture;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 impl Capture {
     pub fn info(&self) -> CaptureInfo {
         CaptureInfo::default()

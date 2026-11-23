@@ -2,6 +2,7 @@
 //! per capture/playback, plus a shared subscription thread for device change
 //! notifications. Never touches default devices except through an explicit
 //! recoverable lease, and never logs audio content.
+pub(crate) mod capture;
 pub(crate) mod devices;
 pub(crate) mod enumerate;
 pub(crate) mod sys;

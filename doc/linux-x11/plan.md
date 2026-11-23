@@ -517,3 +517,12 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - 关键实证：私有 pipewire-pulse 1.0.5（无 session manager）把默认 sink 报为符号占位 `@DEFAULT_SINK@` 且 `get_sink_info_by_name` 不解析它——枚举对符号默认**fail-closed**（无 default 标记、`capture_sample_rate` 显式报"no concrete default"，绝不猜测）；真实宿主（Cinnamon pipewire）正常返回具体名（已对拍验证）。`Connection` 全路径 Drop 断开，早退不关闭会在进程退出时段错误。
 - 原生证据（私有栈，`w1/enumerate.log`、`w1/notify.log`）：枚举对拍 6/6（sink 集合与 pactl 一致、`pulse:sink:` 前缀、私有 `oink_*` 排除、符号默认 fail-closed）；设备通知 4/4（模块加载/卸载 generation 1→5、wake 回调 4 次）。宿主直跑示例验证真实默认 sink/48kHz。
 - 新探针 `linux_audio_enumerate_probe.py`/`linux_audio_notify_probe.py` + 示例 `linux_probe_outputs.rs`/`linux_probe_notifications.rs` + 离线单测 `test_linux_audio_enumerate_probe.py`（10 项），已纳入 500 行门禁名单。
+
+### W2 monitor 捕获（本地提交，未推送）
+
+- `oink-audio` 新增 `linux/capture.rs`：`connect_record` 到默认 sink 的 monitor（`OINK_CAPTURE_SOURCE` 为探针显式源逃逸口），f32le/48k/stereo，10ms fragsize；read 回调 peek/drain → 固定 scratch → `Encoder::supply`，回调内零分配、零音频正文日志（只计 chunks/bytes/holes/调用数）。worker 控制循环 250ms 检查 stream Failed/Terminated + **context 状态**（连接被服务器侧掐断不再静默）。`mute_source` 为登记过的平台 no-op（sink 静音杀 monitor，见 §5），`source_muted()` 恒 false。
+- 线程契约：threaded mainloop 下工作线程所有 `pa_*` 调用必须持 mainloop lock，否则流命令不派发（卡 `Creating`，errno 0）。`BufferAttr` 闲置字段必须 `u32::MAX`（0 不是默认值，pipewire-pulse 永不应答）。`START_CORKED` 连接 → 探针接线 → READY → uncork（ACK 句柄保活到 teardown）。
+- **登记平台限制（私有栈 pipewire-pulse 1.0.5，无 session manager）**：① 脉冲流永不自动链接，READY 以节点有路由为前提 → 探针层负责 PortConfig+pw-link 接线，产品代码不内嵌（R-1 兑现）；② **任一播放流断开会把其余脉冲流节点一并销毁**（服务端杀节点、客户端连接假活、无错误回调）→ 捕获进程单独存活 10s+ 验证稳定，死亡时点与 pacat EOF 精确相关；真实宿主（有 session manager）不预期此行为，待真实会话验收。探针因此让 pacat 全程保活（stdin 不 EOF），tones 窗口按实测 rms 节拍（1.5s 起播、~5.5s 止）划定。
+- `OINK_CAPTURE_SOURCE` 校验（非空/无 NUL/≤512B）；无符号默认时 fail-closed 文案指引该逃逸口。`oink-agent` 接线：`SystemAudio.capture_encoded` Linux 臂、`CaptureStream` trait cfg 臂扩展（finish/default_output_changed/restart_reason）、`recovery_dir` cfg 含 Linux。
+- 原生证据（私有栈，`w2/capture.log`）：fail-closed 通过；3 尝试 × 8s 全存活（node_drop_stat dropped=0），440Hz 捕获 rms −11.7dBFS（三次一致），前静默/后静默 rms<−60、零捕获错误、干净 finish。阶段 2 audio 套件回归 16/16 绿（`w2/audio-suite.log`）。
+- 新探针 `linux_audio_capture_probe.py`（多次尝试证据累计 + 图接线 + stall 检测）+ 示例 `linux_probe_capture.rs`（callback_stats 计数器），已纳入 500 行门禁名单；`capture.rs` 496 行。

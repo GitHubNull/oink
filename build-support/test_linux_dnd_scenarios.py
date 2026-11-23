@@ -184,7 +184,9 @@ class FramingTests(unittest.TestCase):
                  'test_linux_audio_enumerate_probe.py',
                  'crates/oink-audio/examples/linux_probe_outputs.rs',
                  'linux_audio_notify_probe.py',
-                 'crates/oink-audio/examples/linux_probe_notifications.rs')
+                 'crates/oink-audio/examples/linux_probe_notifications.rs',
+                 'linux_audio_capture_probe.py',
+                 'crates/oink-audio/examples/linux_probe_capture.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)

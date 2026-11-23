@@ -8,7 +8,19 @@ pub(crate) use pulse::context::{Context, FlagSet as ContextFlagSet, State};
 pub(crate) use pulse::mainloop::threaded::Mainloop;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const RATE: u32 = 48_000;
+pub(crate) const CHANNELS: u8 = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// Interleaved f32le stereo at the DSP rate; every oink PulseAudio stream
+/// negotiates this exact format and the server resamples the device side.
+pub(crate) fn sample_spec() -> pulse::sample::Spec {
+    pulse::sample::Spec {
+        format: pulse::sample::Format::F32le,
+        channels: CHANNELS,
+        rate: RATE,
+    }
+}
 
 /// A threaded-mainloop connection ready for introspection and stream setup.
 pub(crate) struct Connection {

@@ -54,6 +54,16 @@ pub fn outputs() -> Result<Vec<OutputDevice>, String> {
         .collect())
 }
 
+/// Concrete default sink name, if the server reports one (symbolic
+/// placeholders are not a name and return None).
+pub(crate) fn default_sink_name() -> Option<String> {
+    let conn = sys::connect("oink-enumerate").ok()?;
+    let defaults = query_server_defaults(&conn).ok()?;
+    let name = concrete(&defaults.0).map(str::to_string);
+    conn.close();
+    name
+}
+
 /// The default output's device sample rate, without opening any stream.
 /// The default sink may be one of our private nodes (e.g. the virtual
 /// microphone render sink), so this lookup does not apply the public
@@ -117,4 +127,28 @@ fn sink_summaries(conn: &sys::Connection) -> Result<Vec<SinkSummary>, String> {
     sys::wait_op(&rx, "sink list")?;
     let items = items.lock().unwrap_or_else(|e| e.into_inner());
     Ok(items.clone())
+}
+
+/// Whether a source with this exact name currently exists. `None` means the
+/// lookup itself failed; a definitive answer is never guessed.
+pub(crate) fn monitor_exists(name: &str) -> Option<bool> {
+    let conn = sys::connect("oink-enumerate").ok()?;
+    let (tx, rx) = mpsc::channel();
+    let _op = {
+        let name = name.to_string();
+        conn.context
+            .introspect()
+            .get_source_info_by_name(&name, move |result| match result {
+                ListResult::Item(_) => {
+                    let _ = tx.send(true);
+                }
+                ListResult::Error => {
+                    let _ = tx.send(false);
+                }
+                ListResult::End => {}
+            })
+    };
+    let found = sys::wait_op(&rx, "source info").ok()?;
+    conn.close();
+    Some(found)
 }
