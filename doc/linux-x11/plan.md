@@ -555,3 +555,13 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 
 - `two_nodes_tests/audio.rs` 新增 Linux 臂 `linux_status_fills_every_available_field`：双节点配对+双 exit 收敛后，对两端 Status 逐字段断言——设备事实（对端在列）、exit 决议经 claims 管线解析为 `Exit`、`capture_permission == NotRequired`（Linux 授权系统托管，无请求动作，区别于 macOS 的 Unknown）、`source_muted == false`、无 suspension、无原生 capture/playback info（cfg(test) 关闭 native services 的既有套件约定）、`microphone_inputs` 空（native 枚举不开）；`problem` 只允许 `DeviceUnavailable`（exit 属主在无渲染设备的模拟态下如实上报，证明该字段在 Linux 真填而非 serde 默认）。9/9 通过（8 存量 + 1 新）。
 - **Status 字段全量审计结论**（逐字段证据在 `link.rs:2236-2287` 的 cfg-free 重组装与各 producer）：Linux 无字段缺口。`mute_recovery`/`mute_release_unconfirmed` 恒为 None/false 属设计正确（Linux 不持有端点静音租约，`linux/capture.rs` 显式丢弃 `recovery_dir`，W4/W5 已删 EndpointBackend）；`estimated_latency_ms` 全平台预留未实现；其余字段（含 `capture_info`、`playback_info`、`capture_levels`、`device_states`、`network_rtt_ms`）在 Linux 均有真实数据源。审计结果由上述新测试钉住防回归。门禁：fmt/`clippy -D warnings` rc=0；全量测试 3306 passed（+1）/ 12 failed，failed-names 与基线逐字一致（`w6/{test.log,failed-names.txt}`）。
+
+### W7 收口门禁与交接（本地提交，未推送）
+
+- **门禁**：fmt rc=0；clippy `-D warnings` rc=0 零告警（bounded）；`cargo test --locked --workspace --no-fail-fast` rc=101，12 failed 与阶段 5 基线名单逐字一致、零新增（`w7/gates/`，不加 bounded 的 OOM 口径同 W5）；前端 typecheck rc=0、vitest 105 文件 / 1536 测试、build rc=0；离线 Python 319 项 OK（4 处音频夹具随 W1 设备集合更新：native-test AudioTests、route/restart 探针设备清单）。`npm run licenses:check` 本机无 cargo-about 未运行（阶段 5/6 门禁集均不含此项；装工具需用户批准）。
+- **本波排障实证（custom-protocol 陷阱）**：`cargo test`/裸 `cargo build` 会用**无特性**配置重建 `target/debug/oink`——webview 回退 devUrl `http://localhost:1440`，无开发服务器时前端永不加载、`shell_ready` 永不触发、主窗口永不现身（W2 回归两轮红灯根因；真机 `:0` 复现 + 1440 端口陷阱捕获 `GET /index.html?view=main` 实锤）。修复：`cargo build -p oink-ui --features custom-protocol`，且交付物时间戳须 dist < binary（本轮 15:30 < 15:57）。教训已写入阶段 7 交接 §6。
+- **探针回归（串行、私有 Xephyr）**：阶段 5 剪贴板 11/11、文件 8/8、DnD 8/8、FUSE 4/4（roles sha256 `c157533e` 与阶段 5 同源一致）；阶段 4 输入 9/9 一次过（无焦点竞态）、遮罩 14/14、壁纸 14/14；阶段 3 W2 10/10、W3 14/14、壳、托盘中文 18/18 首轮全绿（托盘菜单已含音频/麦克风子菜单）。
+- **30 分钟混合负载**（`linux_phase4_load.py --duration 1800 --pause-every 300`）：14/14 检查绿、cleanup_ok、remaining_mounts=0（`w7/load.log`、`load/summary.json`）；180 采样、峰值 RSS ui_backend 393656 KiB + overlay 100548 KiB（~482 MiB）；status=30 / notify=15 / pauses=6 / clicks=96 / root_button_events=186；窗口 8→8 回收、无残留僵尸、Shift 无卡死。
+- **产物**：`target/debug/oink`（custom-protocol，15:57）、`oink-agent`/`oink-backend`、阶段 5 四个探针示例与 `phase4_overlay_load` 同树构建。
+- 证据根 `.release-tools/linux-probes/phase6-gate-2026-11-23/w7/`（gitignored）：`gates-summary.txt`、`matrix.md`（阶段 6 功能矩阵）、`real-session-checklist.md`（新增音频 F/G/H 节，A–E 仍待用户）。
+- 交接：阶段 7（协议、设置与桌面配套）交接文档 [2026-11-23-linux-x11-phase7-handoff.md](../handover/2026-11-23-linux-x11-phase7-handoff.md)。
