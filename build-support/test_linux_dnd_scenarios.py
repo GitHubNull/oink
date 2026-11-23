@@ -179,7 +179,12 @@ class FramingTests(unittest.TestCase):
                  'crates/oink-clipboard/examples/phase5_clipboard_probe.rs',
                  'crates/oink-clipboard/examples/phase5_files_probe.rs',
                  'crates/oink-clipboard/examples/phase5_dnd_probe.rs',
-                 'crates/oink-clipboard/examples/phase5_fuse_probe.rs')
+                 'crates/oink-clipboard/examples/phase5_fuse_probe.rs',
+                 'linux_audio_enumerate_probe.py',
+                 'test_linux_audio_enumerate_probe.py',
+                 'crates/oink-audio/examples/linux_probe_outputs.rs',
+                 'linux_audio_notify_probe.py',
+                 'crates/oink-audio/examples/linux_probe_notifications.rs')
         root = Path(__file__).resolve().parent.parent
         for name in names:
             path = root / name if '/' in name else Path(__file__).with_name(name)

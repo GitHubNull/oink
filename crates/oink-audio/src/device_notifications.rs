@@ -85,6 +85,8 @@ pub fn generation() -> u64 {
     {
         #[cfg(windows)]
         windows::start();
+        #[cfg(target_os = "linux")]
+        crate::linux::devices::start();
         GENERATION.load(Ordering::Acquire)
     }
 }
@@ -106,7 +108,12 @@ pub fn service_generation() -> Option<u64> {
     {
         Some(crate::macos_devices::service_generation())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux::devices::start();
+        Some(crate::linux::devices::service_generation())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         None
     }

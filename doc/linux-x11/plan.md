@@ -508,3 +508,12 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 ### 交接
 
 阶段 6（系统音频与虚拟麦克风）交接文档：[2026-11-22-linux-x11-phase6-handoff.md](../handover/2026-11-22-linux-x11-phase6-handoff.md)。
+
+## 阶段 6 实施记录（2026-11-23 ～）
+
+### W1 依赖与 Linux 枚举/设备通知（本地提交，未推送）
+
+- `oink-audio` 新增 `linux/{mod,sys,enumerate,devices}.rs`，libpulse-binding 2.30（threaded mainloop）target-gated 到 Linux；`cpal` 收窄为 macOS/Windows（Linux 枚举不再走 CPAL，兑现 §6-1 设备 ID 统一）。设备 ID 统一为 `pulse:sink:<name>`；`playback::outputs()`、`capture_sample_rate()` Linux 分支接 libpulse；`device_notifications` Linux 订阅线程（SINK/SOURCE/SERVER，回调只置 latch，`service_generation()` 仅服务重启变化）。
+- 关键实证：私有 pipewire-pulse 1.0.5（无 session manager）把默认 sink 报为符号占位 `@DEFAULT_SINK@` 且 `get_sink_info_by_name` 不解析它——枚举对符号默认**fail-closed**（无 default 标记、`capture_sample_rate` 显式报"no concrete default"，绝不猜测）；真实宿主（Cinnamon pipewire）正常返回具体名（已对拍验证）。`Connection` 全路径 Drop 断开，早退不关闭会在进程退出时段错误。
+- 原生证据（私有栈，`w1/enumerate.log`、`w1/notify.log`）：枚举对拍 6/6（sink 集合与 pactl 一致、`pulse:sink:` 前缀、私有 `oink_*` 排除、符号默认 fail-closed）；设备通知 4/4（模块加载/卸载 generation 1→5、wake 回调 4 次）。宿主直跑示例验证真实默认 sink/48kHz。
+- 新探针 `linux_audio_enumerate_probe.py`/`linux_audio_notify_probe.py` + 示例 `linux_probe_outputs.rs`/`linux_probe_notifications.rs` + 离线单测 `test_linux_audio_enumerate_probe.py`（10 项），已纳入 500 行门禁名单。

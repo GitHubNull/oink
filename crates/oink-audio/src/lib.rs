@@ -5,6 +5,8 @@ mod capture_permission;
 pub mod claims;
 #[cfg(any(target_os = "macos", test))]
 mod endpoint_mute;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux;
 pub mod media;
 #[cfg(any(target_os = "macos", windows, test))]
 mod media_pause;
@@ -66,7 +68,7 @@ pub use negotiation::Profile as StreamFormat;
 /// DeviceDesc (e.g. `Speakers`) in name(), and Device_FriendlyName
 /// (`Speakers (USB Audio)`) in the first extended line. Keep that full
 /// name for speaker output enumeration.
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 pub(crate) fn device_name(description: &cpal::DeviceDescription) -> &str {
     #[cfg(windows)]
     if let Some(friendly) = description.extended().first() {
@@ -407,11 +409,18 @@ pub mod pull_test_support;
 
 /// Read the source endpoint format without opening a capture or playback stream.
 pub fn capture_sample_rate() -> Result<u32, String> {
-    use cpal::traits::{DeviceTrait, HostTrait};
-    cpal::default_host()
-        .default_output_device()
-        .ok_or("no default audio output")?
-        .default_output_config()
-        .map(|config| config.sample_rate())
-        .map_err(|error| error.to_string())
+    #[cfg(target_os = "linux")]
+    {
+        linux::enumerate::default_sink_sample_rate()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        cpal::default_host()
+            .default_output_device()
+            .ok_or("no default audio output")?
+            .default_output_config()
+            .map(|config| config.sample_rate())
+            .map_err(|error| error.to_string())
+    }
 }

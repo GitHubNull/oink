@@ -1,7 +1,7 @@
 //! Selected-device pull rendering and bounded, nonblocking diagnostics.
 //! The realtime callback performs no logging or diagnostic I/O.
 use crate::{OutputDevice, handoff, realtime};
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -65,7 +65,11 @@ pub fn outputs() -> Result<Vec<OutputDevice>, String> {
     {
         crate::macos_devices::outputs()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux::enumerate::outputs()
+    }
+    #[cfg(windows)]
     {
         let host = cpal::default_host();
         let default = host
