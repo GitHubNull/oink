@@ -973,3 +973,84 @@ fn audio_settings_api_updates_owner_and_ui_before_reply() {
         },
     );
 }
+
+/// Linux: every Status field the platform can populate is populated through
+/// the real two-node assembly, so the UI never renders placeholders for data
+/// the backend already has. Native services stay simulated like the rest of
+/// this suite (cfg(test) disables them); the device facts, exit-claim
+/// resolution, permission mapping and the platform-correct mute-recovery
+/// defaults are the assertions. The audit behind this test found no Linux
+/// gap: mute_recovery/mute_release_unconfirmed stay None/false by design
+/// (Linux takes no endpoint mute lease) and estimated_latency_ms is reserved
+/// on every platform.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_status_fills_every_available_field() {
+    crate::test_watchdog::run(
+        module_path!(),
+        "linux_status_fills_every_available_field",
+        Some(4),
+        linux_status_fills_every_available_field_scenario(),
+    );
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_status_fills_every_available_field_scenario() {
+    let a = start("lst-a", 0).await;
+    let b = start("lst-b", 0).await;
+    common::pair(&a.node, &b.node).await;
+    common::active(&[&a.node, &b.node]).await;
+    tokio::join!(select_exit(&a.node), select_exit(&b.node));
+    let (a_id, b_id) = (a.node.id(), b.node.id());
+    wait_for("exit resolution on both members", 10., || {
+        [(&a.node, &b_id), (&b.node, &a_id)].iter().all(|(node, peer)| {
+            let status = node.audio_status().unwrap();
+            matches!(status.resolution, oink_audio::claims::Resolution::Exit { .. })
+                && status.devices.iter().any(|d| d.device == **peer)
+                && status.device_states.iter().any(|state| state.device == **peer)
+        })
+    })
+    .await;
+    for (node, peer) in [(&a.node, &b_id), (&b.node, &a_id)] {
+        let status = node.audio_status().unwrap();
+        assert!(status.devices.iter().any(|d| d.device == *peer));
+        assert_eq!(status.device_states.len(), 2, "local and peer audio states");
+        assert!(
+            matches!(status.resolution, oink_audio::claims::Resolution::Exit { .. }),
+            "exit claim must resolve through the claims pipeline"
+        );
+        assert_eq!(
+            status.capture_permission,
+            oink_audio::CapturePermission::NotRequired,
+            "Linux authorization is system-managed; nothing to request"
+        );
+        assert!(!status.source_muted);
+        assert!(!status.mute_release_unconfirmed);
+        assert!(status.mute_recovery.is_none());
+        // With native services off the exit owner has no render device; that
+        // fills `problem`, it must not invent any other failure.
+        assert!(
+            status
+                .problem
+                .as_ref()
+                .is_none_or(|problem| problem.code == oink_audio::model::UserFacingCode::DeviceUnavailable),
+            "unexpected problem {:?}",
+            status.problem
+        );
+        assert!(status.suspension.is_none());
+        assert!(
+            status.capture_info.is_none(),
+            "native capture never starts under cfg(test)"
+        );
+        assert!(
+            status.playback_info.is_none(),
+            "native playback never starts under cfg(test)"
+        );
+        assert!(
+            status.microphone_inputs.is_empty(),
+            "native enumeration stays off under cfg(test)"
+        );
+    }
+    a.node.shutdown().await;
+    b.node.shutdown().await;
+}
