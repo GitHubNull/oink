@@ -20,22 +20,13 @@ env:
   OINK_REPORT_REGION: eu
 jobs:
   package:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'oinkvm/oink' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.event_name == 'workflow_dispatch' && (github.repository == 'oinkvm/oink' || github.repository == 'GitHubNull/oink') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
+        # Fork run: Windows leg only — macOS legs require signing/notarization secrets absent on forks.
         include:
-          - os: macos-15
-            platform: macos
-            arch: arm64
-            target: aarch64-apple-darwin
-            jobs: '2'
-          - os: macos-15-intel
-            platform: macos
-            arch: x64
-            target: x86_64-apple-darwin
-            jobs: '2'
           - os: windows-2022
             platform: windows
             target: x86_64-pc-windows-msvc
@@ -184,7 +175,8 @@ jobs:
           if-no-files-found: error
   draft:
     needs: package
-    if: github.event_name == 'workflow_dispatch'
+    # Fork runs stop at artifacts: no draft GitHub Release outside upstream.
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'oinkvm/oink'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
