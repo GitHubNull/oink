@@ -147,7 +147,7 @@ fn inventory(
             data,
         });
     }
-    let (file_names, mut files) = file_namespace(requestor, &file_lists);
+    let (file_names, mut files, lost_files) = file_namespace(requestor, &file_lists);
     let mut items = Vec::new();
     let mut next_rep = representations.len() as u32 + 1;
     if !representations.is_empty() {
@@ -193,6 +193,13 @@ fn inventory(
             _ => files = None,
         }
     }
+    // A selection that only names files no longer readable must fail the
+    // capture: an empty inventory would turn "paste as file" into a silent
+    // no-op instead of an explicit unavailable error. Byte formats still
+    // salvage a mixed selection.
+    if files.is_none() && lost_files && items.is_empty() {
+        return Err(content::unavailable(Unavailable::NoSuchItem));
+    }
     let inventory = Inventory {
         id: offer(0),
         platform: ClipPlatform::Linux,
@@ -208,9 +215,10 @@ fn inventory(
 fn file_namespace(
     requestor: &Requestor,
     lists: &[(u64, String, bool)],
-) -> (Vec<String>, Option<Arc<dyn content::namespace::Namespace>>) {
+) -> (Vec<String>, Option<Arc<dyn content::namespace::Namespace>>, bool) {
     let mut files: Option<Arc<dyn content::namespace::Namespace>> = None;
     let mut names = Vec::new();
+    let mut lost = false;
     for (atom, name, gnome) in lists {
         let Ok(bytes) = requestor.bytes(*atom, REPRESENTATION_BYTES as usize) else {
             continue;
@@ -229,12 +237,12 @@ fn file_namespace(
                 .collect();
             match Local::clipboard(roots) {
                 Ok(namespace) => files = Some(namespace),
-                Err(_) => return (Vec::new(), None),
+                Err(_) => lost = true,
             }
         }
         names.push(name.clone());
     }
-    (names, files)
+    (names, files, lost)
 }
 
 fn read_representation(expected: Identity, inventory: &Inventory, id: RepresentationId) -> io::Result<crate::FileReader> {
