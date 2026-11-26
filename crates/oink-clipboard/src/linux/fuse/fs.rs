@@ -104,13 +104,20 @@ impl Bridge {
         }
     }
 
-    /// `None` is the synthetic root directory.
+    /// `None` is the synthetic root directory. Only files are re-selected
+    /// through the namespace: `select` is the file-read contract, so a
+    /// directory or symlink would fail there even though its attributes are
+    /// already known from the listing that materialized the inode.
     fn selected(&self, ino: u64) -> io::Result<Option<oink_foundation::content::FileNode>> {
         if ino == links::ROOT_INO {
             return Ok(None);
         }
-        let node = self.index.node(ino)?;
-        self.index.namespace().select(node).map(Some)
+        let stored = self.index.entry(ino)?;
+        if stored.kind == oink_foundation::content::NodeKind::File {
+            self.index.namespace().select(stored.id).map(Some)
+        } else {
+            Ok(Some(stored))
+        }
     }
 
     fn errno(&self, error: io::Error) -> fuser::Errno {
@@ -308,4 +315,47 @@ fn kind(kind: &NodeKind) -> FileType {
 fn owner_ids() -> (u32, u32) {
     // SAFETY: geteuid/getgid take no arguments and are safe in any context.
     unsafe { (libc::geteuid(), libc::getgid()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linux::fuse::fake::Fake;
+    use oink_foundation::content::NodeId;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn directories_and_symlinks_get_attributes_without_a_file_select() {
+        let mut fake = Fake::new();
+        fake.file_only_select();
+        fake.add_root(Fake::dir(1, None, "tree"));
+        fake.add_child(NodeId(1), Fake::dir(2, Some(NodeId(1)), "sub"), None);
+        fake.add_child(NodeId(1), Fake::file(3, Some(NodeId(1)), "a.txt", b"hi"), Some(b"hi".to_vec()));
+        let mut link = Fake::file(4, Some(NodeId(1)), "link", b"");
+        link.kind = NodeKind::Symlink("a.txt".into());
+        link.size = ContentSize::Known("a.txt".len() as u64);
+        fake.add_child(NodeId(1), link, None);
+        let fake = Arc::new(fake);
+        let bridge = Bridge::new(fake.clone(), None);
+
+        let tree = bridge.index.child(links::ROOT_INO, OsStr::new("tree")).expect("lookup tree");
+        let node = bridge.selected(tree).expect("getattr tree").expect("node");
+        assert_eq!(node.kind, NodeKind::Directory);
+        let sub = bridge.index.child(tree, OsStr::new("sub")).expect("lookup sub");
+        assert_eq!(
+            bridge.selected(sub).expect("getattr sub").expect("node").kind,
+            NodeKind::Directory
+        );
+        let link = bridge.index.child(tree, OsStr::new("link")).expect("lookup link");
+        assert_eq!(
+            bridge.selected(link).expect("getattr link").expect("node").kind,
+            NodeKind::Symlink("a.txt".into())
+        );
+        assert_eq!(fake.selects.load(Ordering::Relaxed), 0, "only files reach select");
+
+        let file = bridge.index.child(tree, OsStr::new("a.txt")).expect("lookup a.txt");
+        let node = bridge.selected(file).expect("getattr a.txt").expect("node");
+        assert_eq!(node.kind, NodeKind::File);
+        assert_eq!(fake.selects.load(Ordering::Relaxed), 1, "files revalidate through select");
+    }
 }

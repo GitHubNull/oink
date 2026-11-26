@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 pub(super) const ROOT_INO: u64 = 1;
 
 pub(super) struct Entry {
-    pub(super) node: NodeId,
+    pub(super) node: FileNode,
 }
 
 pub(super) struct Index {
@@ -43,6 +43,13 @@ impl Index {
     }
 
     pub(super) fn node(&self, ino: u64) -> io::Result<NodeId> {
+        self.entry(ino).map(|node| node.id)
+    }
+
+    /// A materialized node's attributes. `Namespace::select` is the file-read
+    /// contract and refuses directories, so the bridge answers those from the
+    /// listing that produced the inode.
+    pub(super) fn entry(&self, ino: u64) -> io::Result<FileNode> {
         if ino == ROOT_INO {
             return Err(io::ErrorKind::InvalidInput.into());
         }
@@ -50,7 +57,7 @@ impl Index {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&ino)
-            .map(|entry| entry.node)
+            .map(|entry| entry.node.clone())
             .ok_or(io::ErrorKind::NotFound.into())
     }
 
@@ -86,14 +93,15 @@ impl Index {
             return *ino;
         }
         let ino = self.next_ino.fetch_add(1, Ordering::Relaxed);
+        let id = node.id;
         self.by_ino
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(ino, Entry { node: node.id });
+            .insert(ino, Entry { node });
         self.by_node
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(node.id, ino);
+            .insert(id, ino);
         ino
     }
 

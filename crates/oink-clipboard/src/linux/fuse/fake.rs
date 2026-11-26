@@ -18,6 +18,9 @@ pub(super) struct Fake {
     versions: Mutex<HashMap<NodeId, u64>>,
     fail_list: Mutex<Option<Unavailable>>,
     fail_open: Mutex<Option<Unavailable>>,
+    /// Real sources refuse directories in `select` (it is the file-read
+    /// contract); this reproduces that behavior for bridge tests.
+    file_only_select: AtomicBool,
     pub lists: AtomicUsize,
     pub opens: AtomicUsize,
     pub selects: AtomicUsize,
@@ -35,6 +38,7 @@ impl Fake {
             versions: Mutex::new(HashMap::new()),
             fail_list: Mutex::new(None),
             fail_open: Mutex::new(None),
+            file_only_select: AtomicBool::new(false),
             lists: AtomicUsize::new(0),
             opens: AtomicUsize::new(0),
             selects: AtomicUsize::new(0),
@@ -62,6 +66,10 @@ impl Fake {
 
     pub fn fail_opens_with(&self, kind: Unavailable) {
         *self.fail_open.lock().unwrap() = Some(kind);
+    }
+
+    pub fn file_only_select(&self) {
+        self.file_only_select.store(true, Ordering::Relaxed);
     }
 
     pub fn bump_version(&self, node: NodeId) {
@@ -153,6 +161,9 @@ impl Namespace for Fake {
     fn select(&self, node: NodeId) -> io::Result<FileNode> {
         self.selects.fetch_add(1, Ordering::Relaxed);
         let found = self.find(node).ok_or_else(|| unavailable(Unavailable::NoSuchItem))?;
+        if self.file_only_select.load(Ordering::Relaxed) && found.kind != NodeKind::File {
+            return Err(unavailable(Unavailable::NoSuchItem));
+        }
         let version = self.version_of(node);
         let mut found = found;
         found.version = version;
