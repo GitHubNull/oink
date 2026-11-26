@@ -404,3 +404,93 @@ fn validating_marker(
         Ok(bytes)
     }))
 }
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::*;
+    use crate::content::tests::Portable;
+    use crate::model::{ContentItem, ItemId, Medium, OfferId, RepresentationId};
+    use oink_foundation::content::ClipId;
+    use oink_foundation::DeviceId;
+
+    fn ready(source: &Source) -> Vec<u8> {
+        match source {
+            Source::Bytes(bytes) => bytes.as_ref().clone(),
+            Source::Lazy(read) => read().unwrap(),
+        }
+    }
+
+    /// A remote offer carries the projected portable bytes; re-publishing it on
+    /// X11 must not consult the remote provider's (absent) native translator.
+    #[test]
+    fn remote_inventory_is_republished_through_projected_bytes() {
+        let link = url::Link {
+            url: "https://example.com/".into(),
+            title: None,
+        };
+        let inventory = Inventory {
+            roots: Vec::new(),
+            id: OfferId {
+                clip: ClipId {
+                    origin: DeviceId([9; 32]),
+                    seq: 3,
+                },
+                generation: 1,
+            },
+            platform: ClipPlatform::Windows,
+            items: vec![ContentItem {
+                virtual_files: false,
+                id: ItemId(1),
+                file: None,
+                representations: vec![
+                    Representation {
+                        id: RepresentationId(1),
+                        format: NativeFormat::WindowsPredefined(13),
+                        medium: Medium::Bytes,
+                        aspect: 1,
+                        index: -1,
+                        standard: Some(StandardFormat::Text),
+                        data: RepresentationData::Inline(b"hello\n".to_vec()),
+                    },
+                    Representation {
+                        id: RepresentationId(2),
+                        format: NativeFormat::WindowsRegistered("HTML Format".into()),
+                        medium: Medium::Bytes,
+                        aspect: 1,
+                        index: -1,
+                        standard: Some(StandardFormat::Html),
+                        data: RepresentationData::Inline(b"<b>hi</b>".to_vec()),
+                    },
+                    Representation {
+                        id: RepresentationId(3),
+                        format: NativeFormat::WindowsRegistered("UniformResourceLocatorW".into()),
+                        medium: Medium::Bytes,
+                        aspect: 1,
+                        index: -1,
+                        standard: Some(StandardFormat::Url),
+                        data: RepresentationData::Inline(link.encode().unwrap()),
+                    },
+                ],
+            }],
+        };
+        let spec = NativeSpec {
+            contents: Arc::new(Portable(inventory.clone())),
+            inventory,
+            files: Vec::new(),
+            file_contents: None,
+            sensitivity: Sensitivity::Normal,
+        };
+        let binding = from_spec(&spec).unwrap();
+        let target = |name: &str| {
+            binding
+                .targets
+                .iter()
+                .find_map(|(existing, source)| (existing == name).then_some(source))
+                .unwrap()
+        };
+        assert_eq!(ready(target(atoms::UTF8)), b"hello\n");
+        assert_eq!(ready(target(atoms::TEXT_PLAIN)), b"hello\n");
+        assert_eq!(ready(target(atoms::TEXT_HTML)), b"<b>hi</b>");
+        assert_eq!(ready(target(atoms::URI_LIST)), b"https://example.com/\r\n");
+    }
+}

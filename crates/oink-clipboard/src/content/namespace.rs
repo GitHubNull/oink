@@ -195,6 +195,9 @@ impl super::Provider for WithFiles {
     fn translator(&self) -> Arc<dyn super::Translator> {
         self.provider.translator()
     }
+    fn projected(&self) -> bool {
+        self.provider.projected()
+    }
     fn reader_guard(&self, id: super::RepresentationId) -> io::Result<super::ReaderGuard> {
         self.provider.reader_guard(id)
     }

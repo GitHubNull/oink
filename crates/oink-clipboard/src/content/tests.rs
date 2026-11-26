@@ -1005,6 +1005,74 @@ impl Provider for Portable {
     fn translator(&self) -> Arc<dyn Translator> {
         unreachable!("target bytes are already projected")
     }
+    fn projected(&self) -> bool {
+        true
+    }
+}
+
+/// Wire payloads already are the portable contract; a foreign target decodes
+/// them directly instead of consulting a native translator.
+#[test]
+fn projected_payloads_serve_foreign_targets_without_a_native_translator() {
+    let link = url::Link {
+        url: "https://example.com/".into(),
+        title: None,
+    };
+    let mut inventory = fixture().inventory();
+    inventory.platform = ClipPlatform::Windows;
+    let representation = |id, format, standard, data| Representation {
+        id: RepresentationId(id),
+        format,
+        medium: Medium::Bytes,
+        aspect: 1,
+        index: -1,
+        standard: Some(standard),
+        data: RepresentationData::Inline(data),
+    };
+    inventory.items[0].representations = vec![
+        representation(
+            1,
+            NativeFormat::WindowsPredefined(13),
+            StandardFormat::Text,
+            b"hello\nworld".to_vec(),
+        ),
+        representation(
+            2,
+            NativeFormat::WindowsRegistered("HTML Format".into()),
+            StandardFormat::Html,
+            b"<b>x</b>".to_vec(),
+        ),
+        representation(
+            3,
+            NativeFormat::WindowsRegistered(crate::formats::WIN_MARKERS[0].into()),
+            StandardFormat::Privacy,
+            vec![1, 0, 0, 0],
+        ),
+        representation(
+            4,
+            NativeFormat::WindowsRegistered("UniformResourceLocatorW".into()),
+            StandardFormat::Url,
+            link.encode().unwrap(),
+        ),
+        representation(
+            5,
+            NativeFormat::WindowsPredefined(13),
+            StandardFormat::Text,
+            vec![0xff],
+        ),
+    ];
+    let source = Portable(inventory);
+    let read = |id| read_all(&mut open_for(&source, RepresentationId(id), ClipPlatform::Linux).unwrap());
+    assert_eq!(read(1).unwrap(), b"hello\nworld");
+    assert_eq!(read(2).unwrap(), b"<b>x</b>");
+    assert_eq!(read(3).unwrap(), vec![1, 0, 0, 0]);
+    assert_eq!(read(4).unwrap(), link.encode().unwrap());
+    assert_eq!(
+        reason(&open_for(&source, RepresentationId(5), ClipPlatform::Linux).err().unwrap()),
+        Unavailable::InvalidData
+    );
+    let mut same = open_for(&source, RepresentationId(1), ClipPlatform::Windows).unwrap();
+    assert_eq!(read_all(&mut same).unwrap(), b"hello\nworld");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

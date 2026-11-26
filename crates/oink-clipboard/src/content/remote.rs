@@ -737,6 +737,9 @@ impl Provider for Remote {
     fn translator(&self) -> Arc<dyn Translator> {
         Arc::new(NoTranslation)
     }
+    fn projected(&self) -> bool {
+        true
+    }
     fn namespace(&self) -> Option<Arc<dyn namespace::Namespace>> {
         (!self.0.inventory.namespace_roots_for(self.0.target).is_empty())
             .then(|| Arc::new(self.clone()) as Arc<dyn namespace::Namespace>)

@@ -114,6 +114,11 @@ pub trait Provider: Send + Sync + 'static {
         Err(unavailable(Unavailable::Unsupported))
     }
     fn translator(&self) -> Arc<dyn Translator>;
+    /// Remote sources already serve the projected portable bytes; a native
+    /// target validates them with [`decode_standard`] instead of a translator.
+    fn projected(&self) -> bool {
+        false
+    }
     /// Preserve a provider's live authority when inline or translated bytes
     /// create a new reader without opening the original storage again.
     fn reader_guard(&self, _representation: RepresentationId) -> io::Result<ReaderGuard> {
@@ -204,6 +209,9 @@ impl Provider for Identified {
     }
     fn translator(&self) -> Arc<dyn Translator> {
         self.provider.translator()
+    }
+    fn projected(&self) -> bool {
+        self.provider.projected()
     }
     fn reader_guard(&self, id: RepresentationId) -> io::Result<ReaderGuard> {
         if find(&self.inventory, id).is_none_or(|rep| matches!(rep.data, RepresentationData::Unavailable(_))) {
@@ -347,6 +355,9 @@ impl Provider for Rebound {
     }
     fn translator(&self) -> Arc<dyn Translator> {
         self.actual.translator()
+    }
+    fn projected(&self) -> bool {
+        self.actual.projected()
     }
     fn reader_guard(&self, id: RepresentationId) -> io::Result<ReaderGuard> {
         self.actual.reader_guard(self.mapped(id)?)
@@ -543,11 +554,19 @@ fn open_for_inventory(
     }
     if rep.standard == Some(crate::model::StandardFormat::Url) {
         let bytes = url::read(&mut reader)?;
-        let encoded = url::capture(provider, inventory, rep, &bytes, hover)?.encode()?;
-        return guarded(Box::new(io::Cursor::new(encoded)), guard);
+        let link = if provider.projected() {
+            url::Link::decode(&bytes)?
+        } else {
+            url::capture(provider, inventory, rep, &bytes, hover)?
+        };
+        return guarded(Box::new(io::Cursor::new(link.encode()?)), guard);
     }
     let bytes = read_all(&mut reader)?;
-    let mut standard = provider.translator().standard_with_source(rep, &bytes, provider)?;
+    let mut standard = if provider.projected() {
+        decode_standard(rep, &bytes)?
+    } else {
+        provider.translator().standard_with_source(rep, &bytes, provider)?
+    };
     if standard.len() != 1 {
         return Err(unavailable(Unavailable::Unsupported));
     }

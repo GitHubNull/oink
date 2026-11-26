@@ -183,6 +183,9 @@ impl Provider for Filtered {
     fn translator(&self) -> Arc<dyn Translator> {
         self.provider.translator()
     }
+    fn projected(&self) -> bool {
+        self.provider.projected()
+    }
     fn reader_guard(&self, id: RepresentationId) -> io::Result<content::ReaderGuard> {
         let inventory = self.provider.inventory();
         content::find(&inventory, id).ok_or_else(|| content::unavailable(Unavailable::NoSuchItem))?;
