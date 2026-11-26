@@ -276,7 +276,20 @@ fn copy_node(
             let selected = namespace.select(node.id)?;
             let mut reader = namespace.open(node.id, selected.version, 0)?;
             let mut file = file.ok_or(io::ErrorKind::InvalidInput)?;
-            let n = io::copy(&mut reader, &mut file)?;
+            // Copy in large chunks: the reader validates the file version on
+            // every call, which costs a remote round trip through a FUSE mount
+            // of a received offer. The default 8 KiB io::copy buffer would cap
+            // such a paste at a few hundred KiB/s.
+            let mut buffer = vec![0u8; 1024 * 1024];
+            let mut n = 0u64;
+            loop {
+                let read = reader.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                file.write_all(&buffer[..read])?;
+                n += read as u64;
+            }
             if let ContentSize::Known(size) = selected.size
                 && n != size
             {
