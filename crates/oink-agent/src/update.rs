@@ -465,7 +465,7 @@ pub(crate) fn attach(node: &Node) {
     online::attach(node);
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn install_failure(node: &Node, error: Error, blockers: Vec<Blocker>) {
     tracing::info!(step="install_failed", error=?error, ?blockers, "upgrade aborted before backend exit");
     let mut state = lock(&node.inner.update);
@@ -518,7 +518,7 @@ pub(crate) fn request_quit() {
         QUITTING.store(false, Ordering::Release);
     });
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn prepare_reopen(node: &Node) -> ApiResult<Prepared> {
     node.prepare_for_update().map_err(|_| api_error(Error::Busy))
 }

@@ -101,6 +101,7 @@ fn main() {
             oink_audio::microphone::StartPermit {
                 user_enabled: true,
                 receiver_has_consumer: true,
+                audible: true,
             },
             capture_encoder,
         ) {

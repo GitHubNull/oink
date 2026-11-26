@@ -178,6 +178,7 @@ impl Runtime {
     }
     /// A silenced source has no native work to maintain, but its receivers
     /// still hold live routes, like a sleeping speaker capture.
+    #[cfg_attr(not(any(target_os = "macos", windows, test)), allow(dead_code))]
     pub(super) fn live(&self) -> bool {
         self.active() || self.silenced.is_some()
     }
