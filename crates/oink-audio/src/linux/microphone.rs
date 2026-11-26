@@ -17,7 +17,9 @@ use crate::linux::{INPUT_PREFIX, mic_virtual, sys};
 use crate::microphone::{CaptureInfo, Permission, StartPermit, permission};
 
 pub use crate::linux::mic_demand::DemandMonitor;
-pub use crate::linux::mic_enumerate::{default_input, input_candidates, inputs, switch_default_input, virtual_output};
+pub use crate::linux::mic_enumerate::{
+    default_input, input_candidates, inputs, shutdown_virtual, switch_default_input, virtual_output,
+};
 
 const START_TIMEOUT: Duration = Duration::from_secs(8);
 const CONTROL_INTERVAL: Duration = from_millis();

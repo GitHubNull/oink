@@ -125,6 +125,72 @@ pub fn ensure() -> Result<VirtualOutput, String> {
     Ok(output)
 }
 
+fn owned_sink(name: &str, argument: &str) -> bool {
+    name == "module-null-sink"
+        && argument.contains(&format!("sink_name={VIRTUAL_SINK}"))
+        && argument.contains(&format!("oink.uid={OINK_UID}\""))
+}
+
+fn owned_source(name: &str, argument: &str) -> bool {
+    name == "module-remap-source"
+        && argument.contains(&format!("source_name={VIRTUAL_SOURCE}"))
+        && argument.contains(&format!("oink.uid={OINK_UID}\""))
+}
+
+/// Unloads the owned virtual pair at clean process exit so no dead recording
+/// device outlives the app. Ownership is the module fingerprint (type plus our
+/// private names and UID); same-named foreign modules are never touched.
+/// Reused leftovers from an earlier crash disappear here too.
+pub(crate) fn teardown() -> Result<(), String> {
+    let conn = sys::connect("oink-mic-teardown")?;
+    let (tx, rx) = mpsc::channel::<bool>();
+    let owned: Arc<Mutex<Vec<(u32, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+    let _op = {
+        let owned = owned.clone();
+        conn.context
+            .introspect()
+            .get_module_info_list(move |result| match result {
+                ListResult::Item(info) => {
+                    let name = info.name.as_deref().unwrap_or_default();
+                    let argument = info.argument.as_deref().unwrap_or_default();
+                    if owned_sink(name, argument) {
+                        owned
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push((info.index, false));
+                    } else if owned_source(name, argument) {
+                        owned.lock().unwrap_or_else(|e| e.into_inner()).push((info.index, true));
+                    }
+                }
+                ListResult::End => {
+                    let _ = tx.send(true);
+                }
+                ListResult::Error => {
+                    let _ = tx.send(false);
+                }
+            })
+    };
+    let listed = sys::wait_op(&rx, "virtual module inventory")?;
+    if !listed {
+        conn.close();
+        return Err("pulse module inventory failed".into());
+    }
+    let mut modules = owned.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // The remap source references the sink monitor; unload it first.
+    modules.sort_by_key(|(_, source)| !source);
+    for (index, _) in modules {
+        let (tx, rx) = mpsc::channel();
+        let _op = conn.context.introspect().unload_module(index, move |ok| {
+            let _ = tx.send(ok);
+        });
+        if !sys::wait_op(&rx, "virtual module unload")? {
+            tracing::warn!(module = index, "virtual microphone module unload was refused");
+        }
+    }
+    conn.close();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +203,17 @@ mod tests {
         let source = remap_source_args();
         assert!(source.contains("source_name=oink_input"));
         assert!(source.contains("master=oink_mic.monitor"));
+    }
+
+    #[test]
+    fn ownership_fingerprint_matches_only_our_modules() {
+        assert!(owned_sink("module-null-sink", &null_sink_args()));
+        assert!(owned_source("module-remap-source", &remap_source_args()));
+        assert!(!owned_sink("module-null-sink", "sink_name=oink_mic"));
+        assert!(!owned_sink("module-remap-source", &remap_source_args()));
+        assert!(!owned_source("module-remap-source", "source_name=oink_input"));
+        assert!(!owned_source("module-null-sink", &null_sink_args()));
+        let foreign_uid = null_sink_args().replace(OINK_UID, &format!("{OINK_UID}-foreign"));
+        assert!(!owned_sink("module-null-sink", &foreign_uid));
     }
 }

@@ -327,6 +327,13 @@ impl AgentHost {
 
     fn stop_all(&mut self, wait_for_ports: bool) {
         if let Some(rt) = self.rt.take() {
+            // FUSE bridge workers call block_on on this runtime, and unmounting
+            // joins them. Sweep while it is alive: at exit the kernel would
+            // otherwise keep every clipboard mount, and a worker still parked
+            // in block_on would panic on timer registration once the runtime
+            // begins shutting down.
+            #[cfg(target_os = "linux")]
+            oink_clipboard::file_share::shutdown();
             let deadline = Instant::now() + Duration::from_secs(3);
             // Cancel and reap launch tools before releasing process ownership;
             // a fresh launch must not race the previous worker's domain reset.
@@ -366,11 +373,13 @@ impl AgentHost {
             }
             rt.shutdown_timeout(deadline.saturating_duration_since(Instant::now()));
         }
-        // Clipboard bridge mounts live in process-global registries that
-        // never drop at exit; without this sweep the kernel keeps every
-        // clipboard mount with a dead FUSE session behind.
+        // The virtual microphone pair is a pulse-server object rather than a
+        // process resource; a clean quit must not leave a dead recording
+        // device behind. Owned fingerprint only — foreign nodes stay.
         #[cfg(target_os = "linux")]
-        oink_clipboard::file_share::shutdown();
+        if let Err(error) = oink_audio::microphone::shutdown_virtual() {
+            tracing::warn!(%error, "virtual microphone teardown failed");
+        }
     }
 }
 

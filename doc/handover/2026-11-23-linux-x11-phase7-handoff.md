@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-**阶段 6（系统音频与虚拟麦克风）已完成 W1–W6 实现与 W7 门禁收口；阶段 1–6 全部仅本地提交，未推送、未 tag。** 真实 Cinnamon 会话的音频/麦克风验收项待用户执行（清单 §9，新增 F/G/H 三节）；阶段 7（协议、设置与桌面配套）未开始。
+**阶段 6（系统音频与虚拟麦克风）已完成 W1–W6 实现与 W7 门禁收口；阶段 1–6 全部仅本地提交，未推送、未 tag。** 真实 Cinnamon 会话的音频/麦克风验收已于 2026-11-27 大部分完成（F1/F2/F5、G1/G3/G4、H 通过；F3 部分通过；F4 设计隐藏；F6/G2 待条件/手工）；阶段 5 清单 A/B/D 已回填通过（C 拖放待用户手工）；阶段 7（协议、设置与桌面配套）未开始。
 
 ## 1. 任务表（阶段 7，全部未开始）
 
@@ -89,10 +89,12 @@ python3 -m unittest discover -s build-support -p 'test_linux*.py'    # 319 OK
 ## 9. 验收标准（DoD）与待用户确认项
 
 - DoD：门禁全绿（基线外零新增）+ 探针全绿 + 30 分钟负载绿 + 证据汇总/matrix/清单更新 + 本地收口提交。
-- 待用户：real-session-checklist F（系统音频 6 项）、G（麦克风 4 项）、H（稳定性抽查）；硬件麦克风验收 `OINK_HARDWARE_USER=1 python3 build-support/linux_hardware_acceptance.py mic-bridge --enable-mic --device <pactl source 名>`；阶段 5 清单 A–E 仍待回填。
+- 2026-11-27 状态：阶段 6 真实会话 F1/F2/F5、G1/G3/G4、H 通过；F3 部分（听感手工）；F4 设计隐藏待可视复核；F6 缺第二发送端、G2 需物理拔插；阶段 5 A1–A7/B1–B5/D1–D2 通过（B3/B5 可视/D3 待手工），C1–C4 拖放需用户手工，E 退出清理由 H 覆盖。证据：`.release-tools/linux-probes/{phase5,phase6}-gate-*/w7/real-session-2026-11-26/`。
+- 待用户：C 节跨机拖放手工；F3 听感；G2 物理拔插；F6 第二发送端；D3/B3/B5 可视手工；硬件麦克风验收 `OINK_HARDWARE_USER=1 python3 build-support/linux_hardware_acceptance.py mic-bridge --enable-mic --device <pactl source 名>`。
 
 ## 10. 交接记录
 
 | 时间 | 代理 | 范围 | 结果 |
 |---|---|---|---|
 | 2026-11-23 | Qoder（第十轮） | 阶段 6 W1–W7 | 系统音频/麦克风实现完成；门禁与原生探针全绿；30 分钟负载完成；待真实会话验收；本地提交 `b22f6c6..42d1fe7` + W7 收口提交；证据 `.release-tools/linux-probes/phase6-gate-2026-11-23/w7/`；本文档 |
+| 2026-11-27 | Qoder（第十一轮） | 真实会话验收（阶段 5 A/B/D + 阶段 6 F/G/H） | A1–A7（xclip/浏览器/LibreOffice）、B1/B2、D1/D2、F1/F2/F5、G1/G3/G4、H 通过；F3 部分（转发音量/静音/持久化自动化，听感手工）；H 缺陷修复（虚拟麦 stop 清理、FUSE 停止竞态）提交本地；C1–C4、G2、F6、B3、D3、B5 可视待手工/条件；回填见两清单 §回填 |

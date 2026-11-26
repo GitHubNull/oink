@@ -7,7 +7,7 @@ pub(crate) mod resample;
 mod selection;
 pub mod session;
 #[cfg(target_os = "linux")]
-pub use crate::linux::microphone::{DemandMonitor, inputs, virtual_output};
+pub use crate::linux::microphone::{DemandMonitor, inputs, shutdown_virtual, virtual_output};
 pub use selection::{DefaultInputHistory, InputCandidate, InputSelection, SelectionError};
 #[cfg(windows)]
 mod windows;

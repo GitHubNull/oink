@@ -112,6 +112,12 @@ pub fn virtual_output() -> Result<VirtualOutput, String> {
     mic_virtual::ensure()
 }
 
+/// Unloads the owned virtual pair on clean process exit; foreign or ambiguous
+/// same-named nodes are never touched.
+pub fn shutdown_virtual() -> Result<(), String> {
+    mic_virtual::teardown()
+}
+
 /// Repair-only default input switch: validates the replacement is an
 /// available hardware input, checks the expected default is still current,
 /// writes `set_default_source` and confirms the readback. Fail-closed on the

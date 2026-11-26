@@ -137,6 +137,29 @@ fn mount_parent() -> PathBuf {
 /// never drops, so without this the kernel keeps every clipboard mount with
 /// a dead transport after the process exits. Dropping the shares unmounts.
 pub(crate) fn shutdown() {
+    // Cancel in-flight readers while their runtime is still alive: unmounting
+    // joins the session threads, and a FUSE worker parked in block_on past the
+    // runtime shutdown panics registering its next timer. Cancellation wakes
+    // those waits now, so the join below is short and panic-free.
+    let mut namespaces: Vec<Arc<Namespace>> = Vec::new();
+    for (weak, _) in keepers().lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        if let Some(namespace) = weak.upgrade() {
+            namespaces.push(namespace);
+        }
+    }
+    for entry in registry().lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        if let Some(share) = entry.1.upgrade()
+            && let Some(namespace) = share.namespace.upgrade()
+        {
+            namespaces.push(namespace);
+        }
+    }
+    for namespace in namespaces {
+        // Stronger than cancel(): ordinary cancellation deliberately keeps
+        // established source links readable, but a process exit must retire
+        // the readers too, or the join below waits on live network reads.
+        namespace.cancel_native_delivery();
+    }
     // Shares' own Drop locks the registry, so release them before that lock.
     keepers().lock().unwrap_or_else(|e| e.into_inner()).clear();
     registry().lock().unwrap_or_else(|e| e.into_inner()).clear();
