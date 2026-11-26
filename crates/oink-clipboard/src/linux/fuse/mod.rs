@@ -132,3 +132,12 @@ fn mount_parent() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
 }
+
+/// Process-exit sweep: keepers live in a global static that the language
+/// never drops, so without this the kernel keeps every clipboard mount with
+/// a dead transport after the process exits. Dropping the shares unmounts.
+pub(crate) fn shutdown() {
+    // Shares' own Drop locks the registry, so release them before that lock.
+    keepers().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    registry().lock().unwrap_or_else(|e| e.into_inner()).clear();
+}

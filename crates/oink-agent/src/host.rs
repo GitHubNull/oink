@@ -366,6 +366,11 @@ impl AgentHost {
             }
             rt.shutdown_timeout(deadline.saturating_duration_since(Instant::now()));
         }
+        // Clipboard bridge mounts live in process-global registries that
+        // never drop at exit; without this sweep the kernel keeps every
+        // clipboard mount with a dead FUSE session behind.
+        #[cfg(target_os = "linux")]
+        oink_clipboard::file_share::shutdown();
     }
 }
 

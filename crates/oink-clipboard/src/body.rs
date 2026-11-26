@@ -381,6 +381,12 @@ pub mod file_share {
     ) -> std::io::Result<Option<FileShare>> {
         crate::linux::fuse::mount_file_share(namespace)
     }
+
+    /// 进程退出前卸载所有仍存活的桥接挂载（剪贴板发布持有的挂载不在任何
+    /// Drop 路径上，全局静态不会随进程退出释放）。
+    pub fn shutdown() {
+        crate::linux::fuse::shutdown();
+    }
 }
 
 // Exercise the pure Windows bitmap codec on every development platform.
