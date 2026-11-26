@@ -13,6 +13,65 @@ use crate::boot::BootInfo;
 pub(crate) const ERROR_REPORTER: &str = r#"window.addEventListener('keydown',e=>{if(e.key==='Escape'&&new URLSearchParams(location.search).get('view')==='panel'){e.preventDefault();window.__TAURI_INTERNALS__?.invoke('shell_close')}});window.addEventListener('error',e=>window.__TAURI_INTERNALS__?.invoke('frontend_error',{message:String(e.error||e.message)}));window.addEventListener('unhandledrejection',e=>window.__TAURI_INTERNALS__?.invoke('frontend_error',{message:String(e.reason)}));"#;
 
 #[tauri::command]
+async fn startup_status(state: State<'_, Backend>) -> Result<String, ()> {
+    Ok(state.startup.status_after(None).await)
+}
+#[tauri::command]
+fn startup_retry(_state: State<'_, Backend>) {
+    #[cfg(windows)]
+    _state.startup.retry(false);
+}
+#[tauri::command]
+fn startup_details() -> String {
+    #[cfg(windows)]
+    {
+        format!(
+            "{}\nUser logs: {}\nService logs: {}",
+            oink_winsvc::backend::startup_details().unwrap_or_else(|e| e.to_string()),
+            oink_foundation::paths::log_dir().display(),
+            oink_winsvc::backend::service_log_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|e| e.to_string())
+        )
+    }
+    #[cfg(not(windows))]
+    String::new()
+}
+#[tauri::command]
+async fn startup_open_logs() -> Result<(), crate::commands::ShellError> {
+    let user = crate::commands::open_folder(oink_foundation::paths::log_dir()).await;
+    #[cfg(windows)]
+    {
+        let path =
+            oink_winsvc::backend::service_log_dir().map_err(|_| crate::commands::ShellError::OpenFolderFailed)?;
+        if path.is_dir() {
+            crate::commands::open_folder(path).await?;
+        }
+    }
+    user
+}
+#[tauri::command]
+fn startup_open_services() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut buffer = [0u16; 32768];
+        // SAFETY: caller-owned writable UTF-16 buffer, length checked below.
+        let length =
+            unsafe { windows::Win32::System::SystemInformation::GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+        if length == 0 || length >= buffer.len() {
+            return Err("Windows system directory unavailable".into());
+        }
+        let dir = std::path::PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length]));
+        std::process::Command::new(dir.join("mmc.exe"))
+            .arg(dir.join("services.msc"))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn frontend_error(message: String) {
     tracing::warn!(%message, "界面脚本错误");
 }
@@ -32,6 +91,7 @@ pub(crate) struct Backend {
     pub(crate) api: Option<Arc<dyn AgentApi>>,
     boot: BootInfo,
     update_window: Arc<crate::update_window::Owner>,
+    update_follow: crate::update_window::Follow,
     pub(crate) startup: crate::service::Startup,
     pub(crate) remote: Option<RemoteApi>,
     capture: Mutex<Option<oink_agent::telemetry::UiCapture>>,
@@ -151,8 +211,7 @@ async fn execute_api_call(
         }
     );
     let owner = state.update_window.clone();
-    let close = window.app_handle().clone();
-    let recover = close.clone();
+    let app = window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
         if let Request::Update { command } = &request {
             // Do not log OpenLocal's path. This boundary precedes both the
@@ -165,71 +224,85 @@ async fn execute_api_call(
                 oink_agent::api::UpdateCommand::Check => "check",
                 oink_agent::api::UpdateCommand::Download => "download",
                 oink_agent::api::UpdateCommand::Skip { .. } => "skip",
+                oink_agent::api::UpdateCommand::Prompted { .. } => "prompted",
                 oink_agent::api::UpdateCommand::Defer { .. } => "defer",
                 oink_agent::api::UpdateCommand::SetPreferences { .. } => "set_preferences",
             };
             tracing::info!(command_type, step = "ui_update_received", "update IPC");
         }
-        let local_install = if installing {
-            let status = api.update_status().inspect_err(|error| {
-                tracing::warn!(
-                    step = "install_status_precheck",
-                    code = error.code(),
-                    reason = error.message(),
-                    "update IPC rejected"
-                );
-            })?;
-            status.candidate.is_some_and(|candidate| candidate.local_package)
+        if installing {
+            install(&app, &api, &owner, request)
         } else {
-            false
-        };
-        crate::update_window::dispatch(
-            installing,
-            || {
-                owner.begin();
-                // A local Windows install still needs UAC. Keep its ordinary
-                // progress UI visible and the backend live until actual drain.
-                // ExitForUpdate later closes the UI for both local platforms.
-                if local_install {
-                    return Ok(());
-                }
-                let (done, wait) = std::sync::mpsc::sync_channel(1);
-                on_main(&close, move |app| {
-                    let result = app.get_webview_window("main").map_or(Ok(()), |window| window.hide());
-                    tracing::info!(target:"oink_update_timing",phase="main_window_hidden", "update window boundary");
-                    if let Err(error) = &result {
-                        tracing::warn!(step = "install_hide_window", %error, "update IPC rejected");
-                    }
-                    let _ = done.send(result.map_err(|error| ApiError::Internal {
-                        message: error.to_string(),
-                    }));
-                });
-                wait.recv().map_err(|error| ApiError::Internal {
-                    message: error.to_string(),
-                })?
-            },
-            || {
-                api::dispatch(api.as_ref(), request).inspect_err(|error| {
-                    if installing {
-                        tracing::warn!(
-                            step = "install_dispatch",
-                            code = error.code(),
-                            reason = error.message(),
-                            ?error,
-                            "update IPC rejected"
-                        );
-                    }
-                })
-            },
-            || {
-                if owner.failure() {
-                    show_main(&recover);
-                }
-            },
-        )
+            api::dispatch(api.as_ref(), request)
+        }
     })
     .await
     .map_err(|e| ApiError::Internal { message: e.to_string() })?
+}
+
+/// One install path for the user's Restart to update and for install after
+/// download: hide the main window, then hand the request to the backend.
+fn install(
+    app: &AppHandle,
+    api: &Arc<dyn AgentApi>,
+    owner: &Arc<crate::update_window::Owner>,
+    request: Request,
+) -> Result<Reply, ApiError> {
+    let local_install = api
+        .update_status()
+        .inspect_err(|error| {
+            tracing::warn!(
+                step = "install_status_precheck",
+                code = error.code(),
+                reason = error.message(),
+                "update IPC rejected"
+            );
+        })?
+        .candidate
+        .is_some_and(|candidate| candidate.local_package);
+    let close = app.clone();
+    crate::update_window::dispatch(
+        true,
+        || {
+            owner.begin();
+            // A local Windows install still needs UAC. Keep its ordinary
+            // progress UI visible and the backend live until actual drain.
+            // ExitForUpdate later closes the UI for both local platforms.
+            if local_install {
+                return Ok(());
+            }
+            let (done, wait) = std::sync::mpsc::sync_channel(1);
+            on_main(&close, move |app| {
+                let result = app.get_webview_window("main").map_or(Ok(()), |window| window.hide());
+                tracing::info!(target:"oink_update_timing",phase="main_window_hidden", "update window boundary");
+                if let Err(error) = &result {
+                    tracing::warn!(step = "install_hide_window", %error, "update IPC rejected");
+                }
+                let _ = done.send(result.map_err(|error| ApiError::Internal {
+                    message: error.to_string(),
+                }));
+            });
+            wait.recv().map_err(|error| ApiError::Internal {
+                message: error.to_string(),
+            })?
+        },
+        || {
+            api::dispatch(api.as_ref(), request).inspect_err(|error| {
+                tracing::warn!(
+                    step = "install_dispatch",
+                    code = error.code(),
+                    reason = error.message(),
+                    ?error,
+                    "update IPC rejected"
+                );
+            })
+        },
+        || {
+            if owner.failure() {
+                show_main(app);
+            }
+        },
+    )
 }
 
 /// The backend creates/returns its local store folder; only this UI shell
@@ -260,6 +333,10 @@ pub fn run() {
             tracing::error!(%error);
             return;
         }
+        #[cfg(target_os = "macos")]
+        if !oink_agent::backend::startup_macos::connect_ui(&data_dir) {
+            return;
+        }
         match oink_agent::instance::acquire_ui(&data_dir) {
             Ok(lock) => {
                 ui_lock = Some(lock);
@@ -281,19 +358,6 @@ pub fn run() {
                 return;
             }
         }
-        // macOS backend is already resident (login item); Linux spawns its
-        // sibling backend below, so it must not require ownership beforehand.
-        #[cfg(target_os = "macos")]
-        {
-            if let Err(error) = crate::service::check_backend_ownership(&data_dir) {
-                tracing::error!(%error, "backend process ownership unavailable");
-                return;
-            }
-            if let Err(error) = remote.hello() {
-                tracing::error!(%error, "backend unavailable");
-                return;
-            }
-        }
         remote_api = Some(remote.clone());
         Some(Arc::new(remote))
     };
@@ -312,6 +376,7 @@ pub fn run() {
             api,
             boot,
             update_window: Arc::new(crate::update_window::Owner::default()),
+            update_follow: crate::update_window::Follow::default(),
             startup: crate::service::Startup::new(cfg!(any(windows, target_os = "linux"))),
             remote: remote_api,
             capture: Mutex::new(Some(oink_agent::telemetry::UiCapture::new(
@@ -321,7 +386,7 @@ pub fn run() {
             _ui_lock: ui_lock,
         })
         .invoke_handler(tauri::generate_handler![
-            boot_info,
+            boot_info, startup_status, startup_retry, startup_details, startup_open_logs, startup_open_services,
             open_diagnostics_folder,
             frontend_error,
             frontend_notice,
@@ -332,6 +397,7 @@ pub fn run() {
             crate::shell::shell_ready,
             crate::shell::shell_close,
             crate::shell::shell_titlebar_center,
+            crate::shell::shell_start_title_drag,
             crate::shell::shell_resize_panel,
             crate::shell::shell_show_panel,
             crate::commands::read_attribution,
@@ -405,6 +471,19 @@ pub fn run() {
                 option_env!("OINK_RELEASE_BUILD").and_then(|s|s.parse().ok()).unwrap_or(0)));
             #[cfg(windows)]
             {
+                // One watch follows the process lifetime. A closed WebView must
+                // not leave a pending native IPC invocation for each reopening.
+                let observer = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri::Emitter;
+                    let mut previous = None;
+                    loop {
+                        let next = observer.state::<Backend>().startup.status_after(previous).await;
+                        let _ = observer.emit_to("main", "startup-changed", &next);
+                        if next == "ready" {break;}
+                        previous = Some(next);
+                    }
+                });
                 crate::foreground_windows::install(&handle);
                 setup_tray(&handle)?;
             }
@@ -419,7 +498,7 @@ pub fn run() {
             if let Some(remote) = handle.state::<Backend>().remote.clone() {
                 let connected = handle.clone();
                 std::thread::spawn(move || {
-                    #[cfg(any(windows, target_os = "linux"))]
+                    #[cfg(target_os = "linux")]
                     {
                         let result = std::env::current_exe().map_err(|e| e.to_string())
                             .and_then(|exe| crate::service::start_once(&remote, &exe));
@@ -440,29 +519,84 @@ pub fn run() {
                             }
                         }
                     }
+                    #[cfg(windows)]
+                    let mut presented = false;
+                    #[cfg(windows)]
+                    loop {
+                        let revision = connected.state::<Backend>().startup.session_revision();
+                        let result = crate::service::start_once(&remote, |detail| {
+                            connected.state::<Backend>().startup.waiting(detail);
+                            if show_at_start && !presented {
+                                presented = true;
+                                show_main(&connected);
+                            }
+                        });
+                        match result {
+                            Ok(()) => break,
+                            Err(error) => {
+                                tracing::error!(%error, "backend startup failed");
+                                let state = connected.state::<Backend>();
+                                state.startup.finish(Err(error.clone()));
+                                if remote.build_mismatch() {
+                                    connected.exit(0);
+                                    return;
+                                }
+                                if !presented { presented = true; show_main(&connected); }
+                                // A WTS notification may race the broker's rejection. Consume
+                                // that activation once, even if it arrived before finish().
+                                if error.starts_with("startup_session:") && state.startup.session_revision() != revision
+                                    && oink_winsvc::session::current_launch_allowed() {
+                                    state.startup.retry(true);
+                                }
+                                tauri::async_runtime::block_on(state.startup.wait_for_retry(error));
+                            }
+                        }
+                    }
+                    // State the native shell keeps outside the WebViews.
+                    let seed = || {
+                        #[cfg(windows)]
+                        if let Ok(settings) = remote.input_settings() {
+                            crate::foreground_windows::configure(&connected, &settings.hotkeys);
+                        }
+                        if let Ok(preferences) = remote.ui_preferences() {
+                            crate::app_icon::preferences(&connected, &preferences);
+                        }
+                        match remote.report_status() {
+                            Ok(status) => apply_report_status(&connected, &status),
+                            Err(error) => tracing::warn!(%error, "UI report status unavailable"),
+                        }
+                    };
                     crate::service::follow(
                         &remote,
                         |_| {
+                            // The status panel may already be visible. Release its
+                            // initial reads only after the event stream is attached.
                             #[cfg(windows)]
-                            if let Ok(settings) = remote.input_settings() {
-                                crate::foreground_windows::configure(&connected, &settings.hotkeys);
+                            {
+                                connected.state::<Backend>().startup.finish(Ok(()));
+                                crate::native_controls::initialize(&connected);
                             }
-                            // Seed the native icon before the first window becomes visible.
-                            if let Ok(preferences) = remote.ui_preferences() {
-                                crate::app_icon::preferences(&connected, &preferences);
-                            }
-                            match remote.report_status() {
-                                Ok(status) => apply_report_status(&connected, &status),
-                                Err(error) => tracing::warn!(%error, "UI report status unavailable"),
-                            }
+                            seed();
                             // Subscribe before the WebView starts its initial API reads,
                             // so changes during that load are already queued as events.
+                            #[cfg(windows)] let show_at_start = show_at_start && !presented;
                             if show_at_start {
                                 show_main(&connected);
                             }
                             if let Err(error) = oink_agent::ipc::Client::connect(remote.data_dir()).and_then(|c| c.ui_ready()) {
                                 tracing::error!(%error, "UI readiness handshake failed");
                                 connected.exit(1);
+                            }
+                        },
+                        |_| {
+                            // Events were lost while the subscription was down.
+                            // The new one is already open, so a reload reads
+                            // current state and misses nothing after it.
+                            seed();
+                            for window in connected.webview_windows().values() {
+                                if let Err(error) = window.eval("window.location.reload()") {
+                                    tracing::warn!(%error, label = window.label(), "view reload after resubscribe failed");
+                                }
                             }
                         },
                         |end| {
@@ -632,10 +766,43 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Install after download, and show the window for a critical update that
+/// the launch check found (also after a hidden login start).
+fn follow_update(app: &AppHandle, status: &oink_agent::api::UpdateStatus) {
+    let state = app.state::<Backend>();
+    if state.update_follow.prompt(status) {
+        tracing::info!(step = "critical_update_prompt", "update window boundary");
+        show_background(app);
+    }
+    let Some(expected_build) = state.update_follow.install(status) else {
+        return;
+    };
+    let Some(api) = state.api.clone() else {
+        return;
+    };
+    let (app, owner) = (app.clone(), state.update_window.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        tracing::info!(expected_build, step = "install_after_download", "update IPC");
+        let request = Request::Update {
+            command: oink_agent::api::UpdateCommand::Install { expected_build },
+        };
+        let _ = install(&app, &api, &owner, request);
+    });
+}
+
 fn forward_events(app: &AppHandle) {
     let Some(api) = app.state::<Backend>().api.clone() else {
         return;
     };
+    // A status known before this launch (a Ready download, a critical update)
+    // is acted on once without waiting for the next change.
+    let initial = app.clone();
+    let query = api.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(status) = query.update_status() {
+            follow_update(&initial, &status);
+        }
+    });
     let handle = app.clone();
     #[cfg(windows)]
     let data_dir = oink_foundation::paths::data_dir();
@@ -658,6 +825,9 @@ fn forward_events(app: &AppHandle) {
         }
         if !matches!(ev, ApiEvent::Stats(_)) || crate::live_views::stats_enabled(&handle) {
             crate::live_views::forward(&handle, ev);
+        }
+        if let ApiEvent::UpdateStatusChanged(status) = ev {
+            follow_update(&handle, status);
         }
         if let ApiEvent::UpdateStatusChanged(status) = ev
             && matches!(

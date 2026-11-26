@@ -308,8 +308,29 @@ input::-ms-reveal, input::-ms-clear { display: none; }
   transition: clip-path 200ms linear;
 }
 
-.upgrade-notes { display: grid; gap: 8px; margin: 0; padding-left: 1.2em; font: 450 14px/1.55 var(--ok-font); color: var(--ok-text-2); }
+/* A critical update rocks its pill about its centre briefly every few seconds; reduced motion zeroes --ok-ms and with it the animation. */
+.ok-btn.upgrade--critical { animation: ok-pop var(--ok-spring-dur) var(--ok-spring) both, upgrade-nudge calc(6s * var(--ok-ms)) var(--ok-ease-out) 1s infinite; }
+@keyframes upgrade-nudge {
+  0%, 10%, 100% { rotate: 0deg; }
+  1.5% { rotate: -8deg; } 3.5% { rotate: 7deg; } 5.5% { rotate: -5deg; } 7.5% { rotate: 3deg; }
+}
+
+/* The title, with its error line, stands 24px above the content; the content sits 14px above the buttons.
+   The error line hangs 8px under the title, inside the body's own top padding so the scroll box does not clip it. */
+.upgrade-dialog.ok-dialog__panel .ok-dialog__body:not(:has(> .upgrade-error)) { margin-top: 8px; }
+.upgrade-dialog .ok-dialog__actions { margin-top: 2px; }
+.upgrade-error { margin: -4px 0 24px; font: 500 12.5px/1.5 var(--ok-font); color: var(--ok-danger-text); }
+.upgrade-notes-box { display: grid; gap: 10px; max-height: 260px; overflow: auto; overscroll-behavior: contain; }
+.upgrade-notice { margin: 0; font: 600 12.5px/1.55 var(--ok-font); color: var(--ok-danger-text); white-space: pre-line; }
+.upgrade-notes { display: grid; gap: 6px; margin: 0; padding-left: 1.2em; font: 450 12.5px/1.55 var(--ok-font); color: var(--ok-text-2); }
 .upgrade-notes li::marker { color: var(--ok-text-3); }
+/* Release-page link on the left, the dialog's buttons at their natural width on the right, auto-install underneath. */
+.upgrade-footer { display: grid; gap: 12px; }
+.upgrade-footer__row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.upgrade-footer__link { margin-inline-start: -10px; }
+.upgrade-footer__actions { display: flex; gap: 10px; margin-inline-start: auto; }
+.upgrade-footer__actions > .ok-btn { min-width: 84px; }
+.upgrade-footer__auto { font-size: 12.5px; color: var(--ok-text-2); }
 
 .win__side-ver {
   position: absolute; right: 6px; bottom: 0; display: flex; align-items: center; height: var(--s);
@@ -767,3 +788,20 @@ body:has(.oink-app:is([data-view="main"], [data-view="panel"])) { background: tr
 
 .shortcut-mouse { width: 18px; height: 20px; display: block; }
 .shortcut-mouse__active { fill: var(--ok-accent); stroke: var(--ok-accent); }
+
+.win__limited { color: var(--ok-warning, #b7791f); }
+.win__limited path { stroke: currentColor; }
+
+.win__title-center[data-shown] .win__limited { pointer-events: auto; }
+
+.boot-wrap { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 24px; }
+.boot-content { width: 100%; max-width: 480px; text-align: center; }
+.boot.ok-empty { --_m: 64px; padding: 8px 0; }
+.boot .ok-empty__desc { max-width: 29em; }
+.boot .ok-empty__actions { display: flex; justify-content: center; gap: 8px; }
+.boot__tools { display: flex; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+.boot__details { padding: 12px; background: var(--ok-surface); border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; font: 12px/1.6 var(--ok-font-mono); }
+.boot .ok-empty__media { background: var(--ok-warning-soft); color: var(--ok-warning-text); }
+.boot:is([data-tone="missing"],[data-tone="exited"]) .ok-empty__media { background: var(--ok-danger-soft); color: var(--ok-danger-text); }
+.boot:is([data-tone="rdp"],[data-tone="session"]) .ok-empty__media { background: var(--ok-info-soft); color: var(--ok-info-text); }
+.boot[data-tone="waiting"] .ok-empty__media { background: var(--ok-accent-soft); color: var(--ok-accent); }

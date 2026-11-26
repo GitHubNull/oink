@@ -17,6 +17,7 @@ vi.mock('./api/transport', async original => ({
   },
 }));
 beforeAll(() => {
+  Element.prototype.scrollTo = vi.fn();
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 });
@@ -70,4 +71,17 @@ describe('tray visibility setting', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(setStatusIcon).not.toHaveBeenCalled();
   });
+});
+
+it('explains the Remote Desktop pause in the canvas until local sharing resumes', async () => {
+  setLanguage('en');
+  agent.adopt('boot', { platform: 'windows', version: '0.1.0-beta.1', build: null, backend: 'agent' });
+  agent.adopt('cards', cards(true, 'remote_desktop'));
+  render(<App/>);
+  expect(screen.getByText('Sharing paused')).toBeTruthy();
+  expect(screen.getByRole('heading', {name: 'Sharing is paused during Remote Desktop'})).toBeTruthy();
+  act(() => agent.adopt('cards', cards(false, 'none')));
+  await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  expect(screen.queryByText('Sharing is paused during Remote Desktop')).toBeNull();
+
 });

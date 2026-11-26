@@ -107,6 +107,7 @@ impl Owner {
         let next = self
             .state
             .reconcile_pointer_slots(self.identity.id())
+            .and_then(|state| state.reconcile_device_order(self.identity.id()))
             .map_err(internal)?;
         if next.digest().map_err(internal)? != self.state.digest().map_err(internal)? {
             self.commit(next)?;
@@ -408,6 +409,7 @@ impl Owner {
             group: self.state.roster().anchor().group,
             roster_digest: self.state.roster().digest().map_err(internal)?,
             pointer_slots: self.state.pointer_slots().map_err(internal)?,
+            device_order: self.state.device_order().map_err(internal)?,
             members: members.clone(),
             layout: layout.clone(),
             owners: drawing_owners.clone(),
@@ -700,6 +702,26 @@ impl Owner {
         self.commit(candidate)
     }
     pub(crate) fn displays_changed(&mut self, displays: Vec<DisplayInfo>) -> ApiResult<()> {
+        // The session can move after enumeration but before this actor turn.
+        // Recheck at publication so that a queued RDP enumeration cannot replace
+        // console geometry before the ordinary observer publishes its pause.
+        #[cfg(windows)]
+        if self.require_console_displays && oink_winsvc::session::remote_desktop() {
+            return Ok(());
+        }
+        // A runtime session cause freezes the last console catalog, including
+        // edits that re-enumerate after a native transaction. Never publish RDP
+        // virtual geometry or clear a retained console layout with an empty list.
+        if self
+            .local
+            .value()
+            .pause()
+            .ok()
+            .flatten()
+            .is_some_and(|pause| pause.reason() == Ok(dto::PauseReason::RemoteDesktop))
+        {
+            return Ok(());
+        }
         self.displays_observed = true;
         self.displays = displays.clone();
         self.observe_display_facts()?;
@@ -880,6 +902,23 @@ impl Owner {
             self.links.retire_for_departure(*id);
         }
         self.fresh_after_revocation()
+    }
+    pub(crate) fn move_device_order(
+        &mut self,
+        device: DeviceId,
+        placement: oink_network::device_order::Placement,
+    ) -> ApiResult<()> {
+        let (oink_network::device_order::Placement::Above(anchor)
+        | oink_network::device_order::Placement::After(anchor)) = placement;
+        let order = self.state.device_order().map_err(internal)?;
+        if anchor == device || !order.contains_key(&device) || !order.contains_key(&anchor) {
+            return Err(ApiError::NotMember);
+        }
+        let next = self
+            .state
+            .move_device(self.identity.id(), device, placement)
+            .map_err(internal)?;
+        self.commit(next)
     }
     pub(crate) fn member_addresses(&self, device: DeviceId) -> ApiResult<Vec<String>> {
         if !self.state.roster().contains(device) {

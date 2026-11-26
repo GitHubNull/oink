@@ -184,6 +184,21 @@ def verify_start_registration(tables, identity):
         raise RuntimeError('MSI Start menu registration must map real app targets and stable identity to a removable ARP product')
 
 
+def verify_credential_provider_unregister(tables):
+    # Issue #46: removal of the auto unlock provider and vault runs as a deferred
+    # SYSTEM DLL action that logs the service image's failing step, on
+    # standalone uninstall only, after the service stopped and before its files go.
+    actions = {row[0]: row for row in tables.get('CustomAction', [])}
+    execute = {row[0]: row for row in tables.get('InstallExecuteSequence', [])}
+    row = execute.get('UnregisterCredentialProvider')
+    if (actions.get('UnregisterCredentialProvider', [])[1:4] != ['3073', 'InstallerCA', 'UnregisterCredentialProvider'] or
+            not row or row[1] != 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE' or
+            not int(execute['StopServices'][2]) < int(row[2]) < int(execute['RemoveFiles'][2]) or
+            any(r[0] == 'UnregisterCredentialProvider' for r in tables.get('InstallUISequence', []))):
+        raise RuntimeError('MSI credential provider removal must be a fatal deferred SYSTEM DLL action on standalone uninstall, '
+                           'after StopServices and before RemoveFiles')
+
+
 def verify_data_cleanup(tables):
     actions = {row[0]: row for row in tables.get('CustomAction', [])}
     execute = {row[0]: row for row in tables.get('InstallExecuteSequence', [])}
@@ -217,12 +232,12 @@ def verify_registration(tables, metadata, identity):
             row[1] for row in tables.get('InstallExecuteSequence', [])
             if row[0] in ('RegisterProduct', 'WriteRegistryValues')):
         raise RuntimeError('MSI registration sequence would overwrite ARP or escape the upgrade transaction')
-    guards = ['InstallInitialize', 'CheckProtectedState', 'StopServices', 'CheckQuiescence',
+    guards = ['InstallInitialize', 'CheckMaintenanceLock', 'StopServices', 'CheckProtectedState', 'CheckQuiescence',
               'DeleteServices', 'RemoveFiles']
     if any(name not in sequence for name in guards) or any(
             sequence[left] >= sequence[right] for left, right in zip(guards, guards[1:])) or any(
             row[1] for row in tables.get('InstallExecuteSequence', [])
-            if row[0] in ('CheckProtectedState', 'CheckQuiescence')):
+            if row[0] in ('CheckMaintenanceLock', 'CheckProtectedState', 'CheckQuiescence')):
         raise RuntimeError('MSI quiescence guards must cover upgrade, uninstall and repair around StopServices')
     cleanup = [row for row in tables.get('CustomAction', []) if row[0] == 'CleanupMaintenance']
     maintenance = [row for row in tables.get('Component', []) if row[0] == 'MaintenanceRoot']
@@ -289,7 +304,7 @@ def verify_msi(manifest, extracted, identity, tables):
     folders = tables.get('CreateFolder', [])
     expected = {
         ('INSTALLFOLDER', 'CreateFolder', 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)', ''),
-        ('MAINTENANCEFOLDER', 'CreateFolder', 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)', ''),
+        ('MAINTENANCEFOLDER', 'CreateFolder', 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;GRGX;;;BU)', ''),
     }
     if (len(permissions) != 2 or {tuple(row[1:]) for row in permissions} != expected or
             len(folders) != 2 or {tuple(row) for row in folders} !=

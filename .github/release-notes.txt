@@ -1,23 +1,18 @@
-Oink 0.3.5 adds sync unlock and a Quicker compatibility mode, and fixes several bugs and usability issues.
+Oink 0.3.7 fixes several stability and usability issues. If Oink on Windows can't start or uninstall after updating to 0.3.6, download and run the 0.3.7 installer manually to repair it
 
-## New
+New
 
-- Sync unlock: after you unlock one computer by hand, the other locked computers in the group unlock too. Turn on "Unlock other devices too" under General in Settings; it is off by default.
-- Clipboard deduplication: copying the same content several times in a row syncs it only once, so Oink doesn't interfere with other clipboard sync tools. You can turn it off under Clipboard in Settings.
-- New "Quicker compatibility mode" on Windows: when it is on, Quicker works normally while this computer is being controlled. Turn it on under Input in Settings.
-- On Windows, you can upgrade by double-clicking the MSI while Oink is running, and Oink restarts automatically when the installation finishes.
+When Oink on Windows or Mac runs into a startup problem, it now explains the cause and what to do;
 
-## Fixes
+Fixes
 
-- Resolutions in the display arrangement now show the screens' actual pixels.
-- Fixed not being able to choose an audio output when a device in the group is offline.
-- Fixed automatic unlock not skipping a Windows computer after "Only allow Windows Hello sign-in" is turned on.
-- Fixed a clipboard-related crash on Mac.
-- Fixed an occasional crash on Windows.
+Fixed "The system cannot find the file specified (os error 2)" and being unable to connect to the backend when opening Oink over Remote Desktop on Windows (#58);
+Fixed Oink on Windows reporting "input service identity verification failed" after an unfinished in-app update, and then being unable to update or uninstall (#41);
+Fixed a leftover update process on Windows staying alive after an in-app update failed midway, which made later installs and uninstalls fail;
+Fixed trackpad gestures forwarded from other devices (switching desktops, Mission Control, etc.) not working on macOS 27;
+Fixed the Oink main window on Mac not supporting system window tiling;
 
-## Compatibility
-
-- 0.3.5 works with 0.3.0 and later.
+Compatibility: 0.3.7 can connect to 0.3.0 and later.
 
 ## Downloads
 

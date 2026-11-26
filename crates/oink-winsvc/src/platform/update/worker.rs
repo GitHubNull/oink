@@ -2,7 +2,9 @@ use super::super::{Handle, check, security, token, wide};
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use oink_update::{
-    feed,
+    catalog::{self, Check, Expected, Kind},
+    feed::{self, Channel},
+    fetch,
     transaction::{self, InstallOutcome, Journal, Platform, Stage},
     trust::{LocalRoots, Roots},
 };
@@ -18,7 +20,8 @@ use windows_sys::Win32::{
     Foundation::*,
     Storage::FileSystem::*,
     System::{
-        Diagnostics::ToolHelp::*, Registry::*, RemoteDesktop::*, Services::*, SystemInformation::*, Threading::*,
+        Diagnostics::ToolHelp::*, JobObjects::*, Registry::*, RemoteDesktop::*, Services::*, SystemInformation::*,
+        Threading::*,
     },
 };
 
@@ -222,6 +225,7 @@ pub(super) fn prepare_package(
     candidate: feed::Release,
     previous: Option<feed::Release>,
     envelope: &[u8],
+    channel: Channel,
     roots: &PackageTrust,
     local: bool,
 ) -> Result<PreparedPackage, Error> {
@@ -285,7 +289,7 @@ pub(super) fn prepare_package(
     }
     let previous_msi = previous_directory.join("package.msi");
     if !local && !previous_msi.exists() && !previous.package.url.is_empty() {
-        let bytes = service::http(&previous.package.url, previous.package.length, true)?;
+        let bytes = fetch::get(&previous.package.url, previous.package.length, true, &mut |_, _| {})?;
         feed::verify_package(&bytes, &previous.package, &roots.feed()?)?;
         protected::write(&previous_msi, &bytes)?;
         protected::write(&previous_directory.join("release.json"), &json(&previous)?)?;
@@ -336,6 +340,7 @@ pub(super) fn prepare_package(
     Ok(PreparedPackage {
         transaction: tx,
         local,
+        channel,
         rollback_package,
         candidate,
         previous,
@@ -348,6 +353,7 @@ pub(super) fn prepare_package(
 pub(super) struct PreparedPackage {
     pub transaction: String,
     local: bool,
+    channel: Channel,
     rollback_package: bool,
     candidate: feed::Release,
     previous: feed::Release,
@@ -358,6 +364,9 @@ pub(super) struct PreparedPackage {
 }
 fn cached_inventory(receipt: &msi::Receipt) -> Result<msi::Inventory, Error> {
     let destination = cache(receipt.build)?;
+    // ACL recovery discards the entire untrusted maintenance subtree. Recreate
+    // the protected cache boundary before capturing the installed baseline.
+    protected::directory(destination.parent().ok_or(Error::Storage)?).map_err(|_| Error::Storage)?;
     protected::directory(&destination).map_err(|_| Error::Storage)?;
     let path = destination.join("inventory.json");
     let inventory = if path.exists() {
@@ -398,13 +407,14 @@ pub(super) fn stage(prepared: &PreparedPackage, sessions: Vec<Session>) -> Resul
         local: prepared.local,
         rollback_package: prepared.rollback_package,
         transaction: tx.clone(),
+        channel: prepared.channel,
         candidate: prepared.candidate.clone(),
         previous: prepared.previous.clone(),
         candidate_inventory: prepared.candidate_inventory.clone(),
         previous_inventory: prepared.previous_inventory.clone(),
         sessions,
         reboot_marker_armed: false,
-        lock_handle: format!("{:016x}", lock.0 as usize),
+        lock_handle: "0000000000000000".into(),
         worker_pid: 0,
         worker_created_filetime: "0000000000000000".into(),
         worker_sha256: prepared.worker_sha256.clone(),
@@ -418,18 +428,103 @@ pub(super) fn stage(prepared: &PreparedPackage, sessions: Vec<Session>) -> Resul
         plan.candidate.package.sha256.clone(),
     )?;
     protected::write(&maintenance.join("pending.json"), &json(&journal)?)?;
-    let (process, thread) = spawn_worker(&worker, &tx, &lock)?;
-    // SAFETY: returned live child process handle pins its identity before it executes.
-    plan.worker_pid = unsafe { GetProcessId(process.0) };
-    plan.worker_created_filetime = format!("{:016x}", protected::created(process.0)?);
-    write_plan(&plan)?;
-    // SAFETY: child was created suspended, after plan and pending became durable.
-    if unsafe { ResumeThread(thread.0) } == u32::MAX {
-        return Err(Error::Transaction);
-    }
+    launch_worker(&worker, &tx, &lock, |pid, created, remote_lock| {
+        plan.lock_handle = format!("{remote_lock:016x}");
+        plan.worker_pid = pid;
+        plan.worker_created_filetime = created;
+        write_plan(&plan)
+    })?;
     Ok(tx)
 }
-fn spawn_worker(worker: &Path, tx: &str, lock: &Handle) -> Result<(Handle, Handle), Error> {
+
+fn set_kill_on_close(job: &Handle, enabled: bool) -> Result<(), Error> {
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    // MSI and relaunched applications have lifetimes independent of the worker.
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+    if enabled {
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    }
+    // SAFETY: the private job has no other configured limits.
+    check(unsafe {
+        SetInformationJobObject(
+            job.0,
+            JobObjectExtendedLimitInformation,
+            ptr::addr_of!(limits).cast(),
+            size_of_val(&limits) as u32,
+        )
+    })
+    .map_err(|_| Error::Transaction)
+}
+
+fn launch_worker(
+    worker: &Path,
+    tx: &str,
+    lock: &Handle,
+    persist: impl FnOnce(u32, String, usize) -> Result<(), Error>,
+) -> Result<Handle, Error> {
+    // Attach at creation: assigning a job afterwards leaves a crash window in
+    // which a suspended child can keep the inherited maintenance lock forever.
+    // The job handle itself stays in the service. Disarm it only after resume:
+    // the running worker must survive the service stopping during installation.
+    // SAFETY: unnamed job with default security and a non-inheritable handle.
+    let job = Handle::new(unsafe { CreateJobObjectW(ptr::null(), ptr::null()) }).map_err(|_| Error::Transaction)?;
+    set_kill_on_close(&job, true)?;
+    let (process, thread) = spawn_worker(worker, tx, &job)?;
+    let start = || {
+        // SAFETY: owned creation handle pins the child's identity.
+        let pid = unsafe { GetProcessId(process.0) };
+        if pid == 0 {
+            return Err(Error::Transaction);
+        }
+        // A handle list limits only its own CreateProcess call. An inheritable
+        // service lock could also escape into a concurrently spawned process,
+        // keeping the file busy after the worker exits (Windows error 32).
+        // Give the suspended worker a non-inheritable copy in its own table.
+        let mut remote_lock = ptr::null_mut();
+        // SAFETY: both processes and the source handle are pinned. Only the
+        // worker owns the duplicate; record its value before resuming it.
+        check(unsafe {
+            DuplicateHandle(
+                GetCurrentProcess(),
+                lock.0,
+                process.0,
+                &mut remote_lock,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        })
+        .map_err(|_| Error::Transaction)?;
+        persist(
+            pid,
+            format!("{:016x}", protected::created(process.0)?),
+            remote_lock as usize,
+        )?;
+        // SAFETY: the child's plan is durable before its primary thread runs.
+        if unsafe { ResumeThread(thread.0) } == u32::MAX {
+            return Err(Error::Transaction);
+        }
+        set_kill_on_close(&job, false)
+    };
+    let result = start();
+    drop(job);
+    if let Err(error) = result {
+        // Closing the last job handle requests termination asynchronously. Wait
+        // for the kernel to release the child's lock before reporting failure.
+        // SAFETY: the creation handle remains owned throughout the wait.
+        if unsafe { WaitForSingleObject(process.0, INFINITE) } != WAIT_OBJECT_0 {
+            return Err(Error::Transaction);
+        }
+        return Err(error);
+    }
+    Ok(process)
+}
+
+fn spawn_worker(worker: &Path, tx: &str, job: &Handle) -> Result<(Handle, Handle), Error> {
+    let app = wide(worker.to_str().ok_or(Error::Storage)?);
+    let mut args = wide(&format!("\"{}\" {tx}", worker.display()));
+    let mut environment = environment()?;
+    let directory = wide(worker.parent().and_then(Path::to_str).ok_or(Error::Storage)?);
     let mut length = 0usize;
     // SAFETY: first call obtains required attribute-list size; no output buffer yet.
     unsafe {
@@ -439,43 +534,36 @@ fn spawn_worker(worker: &Path, tx: &str, lock: &Handle) -> Result<(Handle, Handl
     let list = storage.as_mut_ptr().cast();
     // SAFETY: aligned storage of returned size; initialized list lives through process creation.
     check(unsafe { InitializeProcThreadAttributeList(list, 1, 0, &mut length) }).map_err(|_| Error::Storage)?;
-    let mut only_handle = lock.0;
-    // SAFETY: the one inherited handle is the exclusive maintenance lock, never a user token.
-    let result = unsafe {
+    // SAFETY: assign membership without inheriting the job handle.
+    if unsafe {
         UpdateProcThreadAttribute(
             list,
             0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-            ptr::addr_of_mut!(only_handle).cast(),
+            PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+            ptr::addr_of!(job.0).cast(),
             size_of::<HANDLE>(),
             ptr::null_mut(),
             ptr::null(),
         )
-    };
-    if result == 0 {
-        // SAFETY: release the successfully initialized attribute list.
-        unsafe {
-            DeleteProcThreadAttributeList(list);
-        }
+    } == 0
+    {
+        // SAFETY: this list was initialized successfully.
+        unsafe { DeleteProcThreadAttributeList(list) };
         return Err(Error::Storage);
     }
-    let app = wide(worker.to_str().ok_or(Error::Storage)?);
-    let mut args = wide(&format!("\"{}\" {tx}", worker.display()));
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
     startup.lpAttributeList = list;
     let mut process = PROCESS_INFORMATION::default();
-    let mut environment = environment()?;
-    let directory = wide(worker.parent().and_then(Path::to_str).ok_or(Error::Storage)?);
     // SAFETY: fixed signed old worker, validated hex argument, controlled environment,
-    // explicit handle allowlist. The SYSTEM creator's token is used unchanged.
+    // no inherited handles. The SYSTEM creator's token is used unchanged.
     let created = unsafe {
         CreateProcessW(
             app.as_ptr(),
             args.as_mut_ptr(),
             ptr::null(),
             ptr::null(),
-            1,
+            0,
             CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
             environment.as_mut_ptr().cast(),
             directory.as_ptr(),
@@ -488,10 +576,8 @@ fn spawn_worker(worker: &Path, tx: &str, lock: &Handle) -> Result<(Handle, Handl
         DeleteProcThreadAttributeList(list);
     }
     check(created).map_err(|_| Error::Transaction)?;
-    Ok((
-        Handle::new(process.hProcess).map_err(|_| Error::Transaction)?,
-        Handle::new(process.hThread).map_err(|_| Error::Transaction)?,
-    ))
+    // Successful CreateProcessW returns both owned handles.
+    Ok((Handle(process.hProcess), Handle(process.hThread)))
 }
 fn environment() -> Result<Vec<u16>, Error> {
     use std::os::windows::ffi::OsStrExt;
@@ -593,21 +679,14 @@ impl Worker {
             }
             return Ok(());
         }
-        let manifest = feed::verify_manifest(
+        catalog_admits(
             &protected::read(&self.directory.join("manifest.json"), feed::MAX_FEED as u64)?,
             &self.roots.feed()?,
-            &machine.watermarks.get("stable").cloned().unwrap_or_default(),
+            &self.plan,
+            &machine,
+            windows_build()?,
             now(),
-        )?;
-        feed::verify_version(&self.plan.candidate.version, &self.plan.previous.version)?;
-        if !manifest.manifest().releases.contains(&self.plan.candidate)
-            || self.plan.candidate.architecture != "x64"
-            || self.plan.candidate.build <= self.plan.previous.build.max(machine.successful_build)
-            || machine.quarantine.contains(&self.plan.candidate.build)
-        {
-            return Err(Error::Policy);
-        }
-        Ok(())
+        )
     }
     fn save(&self, journal: &Journal) -> Result<(), Error> {
         protected::write(
@@ -1020,32 +1099,79 @@ impl Platform for Worker {
         protected::write(&maintenance.join("last-result.json"), &journal)?;
         clear_boot_markers(HKEY_LOCAL_MACHINE, r"Software\Oink")?;
         remove_completed_files(&maintenance, protected::open)?;
-        // Only after health commit/rollback and pending removal: ordinary UI
-        // activation follows the same entry as the installer's Launch Oink.
-        if self.directory.join("drained.json").exists() {
-            let reopen = || -> Result<(), Error> {
-                let live = super::pipe::sessions().map_err(|_| Error::Transaction)?;
-                for original in &self.plan.sessions {
-                    if live.contains(&original.id)
-                        && STANDARD.encode(security::user_sid(original.id).map_err(|_| Error::Policy)?) == original.sid
-                    {
-                        super::super::backend::spawn_update_ui(
-                            original.id,
-                            &STANDARD.decode(&original.sid).map_err(|_| Error::Metadata)?,
-                        )
-                        .map_err(|_| Error::Transaction)?;
-                    }
-                }
-                Ok(())
-            };
-            if let Err(error) = reopen() {
-                // UI activation is best effort after the durable product result;
-                // it must not turn an already completed rollback into RepairRequired.
-                tracing::warn!(%error, "could not reopen Oink after update");
-            }
-        }
+        reopen_completed(&self.directory, &self.plan);
         Ok(())
     }
+}
+fn reopen_completed(directory: &Path, plan: &Plan) {
+    // Only after health commit/rollback and pending removal: ordinary UI
+    // activation follows the same entry as the installer's Launch Oink.
+    if directory.join("drained.json").exists() {
+        let reopen = || -> Result<(), Error> {
+            let live = super::pipe::sessions().map_err(|_| Error::Transaction)?;
+            for original in &plan.sessions {
+                if live.contains(&original.id)
+                    && STANDARD.encode(security::user_sid(original.id).map_err(|_| Error::Policy)?) == original.sid
+                {
+                    super::super::backend::spawn_update_ui(
+                        original.id,
+                        &STANDARD.decode(&original.sid).map_err(|_| Error::Metadata)?,
+                    )
+                    .map_err(|_| Error::Transaction)?;
+                }
+            }
+            Ok(())
+        };
+        if let Err(error) = reopen() {
+            // UI activation is best effort after the durable product result;
+            // it must not turn an already completed rollback into RepairRequired.
+            tracing::warn!(%error, "could not reopen Oink after update");
+        }
+    }
+}
+/// The stored catalog bytes still verify and still route the installed build
+/// to exactly this candidate, which must not be a manual-only update.
+fn catalog_admits(
+    bytes: &[u8],
+    trust: &feed::Trust<'_>,
+    plan: &Plan,
+    machine: &MachinePolicy,
+    windows_build: u32,
+    now: i64,
+) -> Result<(), Error> {
+    let expected = Expected {
+        platform: catalog::Platform::Windows,
+        architecture: ARCH,
+        channel: plan.channel,
+    };
+    let seen = machine
+        .watermarks
+        .get(&catalog_watermark(plan.channel))
+        .cloned()
+        .unwrap_or_default();
+    let verified = catalog::verify(bytes, trust, &expected, &seen, now)?;
+    feed::verify_version(&plan.candidate.version, &plan.previous.version)?;
+    let selected = verified
+        .plan(&catalog::Selection {
+            installed_build: plan.previous.build,
+            successful_build: machine.successful_build,
+            quarantine: &machine.quarantine,
+            channel: plan.channel,
+            os: os_version(windows_build),
+            // The user chose this candidate; skipping only hides offers.
+            skipped_build: None,
+            check: Check::Manual,
+        })
+        .map_err(|_| Error::Policy)?;
+    if selected.kind == Kind::Manual
+        || transaction_release(&selected.release)? != plan.candidate
+        || plan.candidate.architecture != ARCH
+        || plan.candidate.build <= plan.previous.build.max(machine.successful_build)
+        || machine.quarantine.contains(&plan.candidate.build)
+    {
+        return Err(Error::Policy);
+    }
+    Ok(())
 }
 fn cache_verified_package(
     directory: &Path,
@@ -1535,13 +1661,57 @@ fn product_installed(product: &str) -> bool {
     unsafe { MsiQueryProductStateW(wide(product).as_ptr()) != INSTALLSTATE_UNKNOWN }
 }
 
+/// Preserve the producer's schema, including absent optional fields. Only the
+/// three runtime values already understood by every released worker may change.
+fn relaunch_plan(original: &[u8], plan: &Plan) -> Result<Vec<u8>, Error> {
+    let mut value: serde_json::Value = feed::strict_json(original)?;
+    value["lock_handle"] = plan.lock_handle.clone().into();
+    value["worker_pid"] = plan.worker_pid.into();
+    value["worker_created_filetime"] = plan.worker_created_filetime.clone().into();
+    serde_json::to_vec(&value).map_err(|_| Error::Metadata)
+}
+
+/// A committed journal is authority for cleanup only when the installed build
+/// agrees. The exclusive lock keeps a still-running old worker in charge.
+pub(super) fn finish_committed() -> Result<bool, Error> {
+    let maintenance = protected::maintenance().map_err(|_| Error::Storage)?;
+    let _lock = protected::lock()?;
+    let bytes = protected::read(&maintenance.join("pending.json"), 65536)?;
+    let journal = Journal::parse(&bytes)?;
+    if !super::committed_build(&journal, installed()?.build) {
+        return Ok(false);
+    }
+    let directory = transaction_dir(&journal.transaction)?;
+    let failure = directory.join("failure-policy.json");
+    if failure.exists() {
+        set_failure_policy(&feed::strict_json(&protected::read(&failure, 65536)?)?)?;
+    }
+    let plan = protected::read(&directory.join("plan.json"), feed::MAX_FEED as u64)
+        .and_then(|bytes| feed::strict_json::<Plan>(&bytes))
+        .ok();
+    super::task::remove(&journal.transaction)?;
+    protected::write(&maintenance.join("last-result.json"), &bytes)?;
+    clear_boot_markers(HKEY_LOCAL_MACHINE, r"Software\Oink")?;
+    remove_completed_files(&maintenance, protected::open)?;
+    super::invalidate_observation();
+    if let Some(plan) = plan {
+        reopen_completed(&directory, &plan);
+    }
+    // Removal of the transaction tree uses the existing no-reparse walker in
+    // prune_completed, after pending is gone; do not recurse via std::fs.
+    protected::prune_completed(journal.new_build)?;
+    tracing::info!(transaction = %journal.transaction, "service completed committed update cleanup");
+    Ok(true)
+}
+
 /// Recovery entry while SCM is still alive handles a crash before task arming.
 /// Once the task exists it independently covers service death and reboot.
 pub(super) fn resume_pending() -> Result<Handle, Error> {
     let maintenance = protected::maintenance().map_err(|_| Error::Storage)?;
     let journal = Journal::parse(&protected::read(&maintenance.join("pending.json"), 65536)?)?;
     let directory = transaction_dir(&journal.transaction)?;
-    let mut plan: Plan = feed::strict_json(&protected::read(&directory.join("plan.json"), feed::MAX_FEED as u64)?)?;
+    let original = protected::read(&directory.join("plan.json"), feed::MAX_FEED as u64)?;
+    let mut plan: Plan = feed::strict_json(&original)?;
     if plan.worker_pid != 0 {
         // SAFETY: query-only pinned process, no terminate/start capability.
         let opened = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, plan.worker_pid) };
@@ -1561,17 +1731,14 @@ pub(super) fn resume_pending() -> Result<Handle, Error> {
     if protected::hash(&worker)? != plan.worker_sha256 {
         return Err(Error::Signature);
     }
-    plan.lock_handle = format!("{:016x}", lock.0 as usize);
-    let (process, thread) = spawn_worker(&worker, &plan.transaction, &lock)?;
-    // SAFETY: suspended child handles returned by CreateProcessW.
-    plan.worker_pid = unsafe { GetProcessId(process.0) };
-    plan.worker_created_filetime = format!("{:016x}", protected::created(process.0)?);
-    write_plan(&plan)?;
-    // SAFETY: plan persisted before the owned suspended worker is allowed to run.
-    if unsafe { ResumeThread(thread.0) } == u32::MAX {
-        return Err(Error::Transaction);
-    }
-    Ok(process)
+    let tx = plan.transaction.clone();
+    launch_worker(&worker, &tx, &lock, |pid, created, remote_lock| {
+        plan.lock_handle = format!("{remote_lock:016x}");
+        plan.worker_pid = pid;
+        plan.worker_created_filetime = created;
+        // Preserve the schema understood by the signed worker being relaunched.
+        protected::write(&directory.join("plan.json"), &relaunch_plan(&original, &plan)?)
+    })
 }
 
 #[cfg(test)]
@@ -1582,12 +1749,245 @@ mod environment_tests;
 mod tests {
     use super::*;
     #[test]
+    fn worker_launch_failure_reaps_child_and_releases_transferred_lock() {
+        use std::os::windows::{fs::OpenOptionsExt, io::IntoRawHandle};
+
+        struct TestChild {
+            process: Handle,
+        }
+        impl Drop for TestChild {
+            fn drop(&mut self) {
+                // SAFETY: pinned handle to our own fixture child. Clean up even
+                // if a regression leaves it suspended and an assertion panics.
+                unsafe {
+                    TerminateProcess(self.process.0, 1);
+                    WaitForSingleObject(self.process.0, INFINITE);
+                }
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("maintenance.lock");
+        let file = std::fs::File::options()
+            .create_new(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let lock = Handle(file.into_raw_handle());
+        let mut child = None;
+        let exe = system_dir().unwrap().join("cmd.exe");
+        let result = launch_worker(&exe, "/d /c exit 37", &lock, |pid, _, remote_lock| {
+            // SAFETY: launch_worker pins this newly created, suspended process.
+            let process =
+                Handle::new(unsafe { OpenProcess(PROCESS_DUP_HANDLE | PROCESS_TERMINATE | SYNCHRONIZE, 0, pid) })
+                    .unwrap();
+            let child = child.insert(TestChild { process });
+            let mut copy = ptr::null_mut();
+            // SAFETY: pin the duplicate recorded for this worker to check object identity.
+            unsafe {
+                check(DuplicateHandle(
+                    child.process.0,
+                    remote_lock as HANDLE,
+                    GetCurrentProcess(),
+                    &mut copy,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                ))
+                .unwrap();
+                let copy = Handle(copy);
+                assert_ne!(CompareObjectHandles(lock.0, copy.0), 0);
+            }
+            Err(Error::Storage)
+        });
+        assert_eq!(result.unwrap_err(), Error::Storage);
+        let child = child.unwrap();
+        // SAFETY: nonblocking query on our pinned fixture process.
+        assert_eq!(unsafe { WaitForSingleObject(child.process.0, 0) }, WAIT_OBJECT_0);
+        drop(lock);
+        let reopened = std::fs::File::options().write(true).share_mode(0).open(path).unwrap();
+        let lock = Handle(reopened.into_raw_handle());
+        let next = TestChild {
+            process: launch_worker(&exe, "/d /c exit 37", &lock, |_, _, _| Ok(())).unwrap(),
+        };
+        // SAFETY: the fixture just exits with a known code. Verify it survived
+        // the successful launch dropping the service's last job handle.
+        unsafe {
+            assert_eq!(WaitForSingleObject(next.process.0, INFINITE), WAIT_OBJECT_0);
+            let mut code = 0;
+            check(GetExitCodeProcess(next.process.0, &mut code)).unwrap();
+            assert_eq!(code, 37);
+        }
+    }
+
+    // Plan is unchanged across the 0.3.3/0.3.4/0.3.5 release commits.
+    // Keep the old strict reader here, rather than approximating a field list.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyPlan {
+        schema: u32,
+        #[serde(default)]
+        local: bool,
+        #[serde(default = "yes")]
+        rollback_package: bool,
+        transaction: String,
+        candidate: Release,
+        previous: Release,
+        candidate_inventory: msi::Inventory,
+        previous_inventory: msi::Inventory,
+        sessions: Vec<Session>,
+        reboot_marker_armed: bool,
+        lock_handle: String,
+        worker_pid: u32,
+        worker_created_filetime: String,
+        worker_sha256: String,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyPlan036 {
+        schema: u32,
+        #[serde(default)]
+        local: bool,
+        #[serde(default = "yes")]
+        rollback_package: bool,
+        transaction: String,
+        /// Catalog the candidate was selected from; local plans have none.
+        #[serde(default)]
+        channel: Channel,
+        candidate: Release,
+        previous: Release,
+        candidate_inventory: msi::Inventory,
+        previous_inventory: msi::Inventory,
+        sessions: Vec<Session>,
+        reboot_marker_armed: bool,
+        lock_handle: String,
+        worker_pid: u32,
+        worker_created_filetime: String,
+        worker_sha256: String,
+    }
+    #[test]
+    fn relaunch_preserves_all_released_strict_plan_readers() {
+        use super::super::test_catalog as fixture;
+        let catalog = fixture::verified(&fixture::payload(), Channel::Beta).unwrap();
+        let release = transaction_release(&catalog.catalog().releases[0]).unwrap();
+        let inventory = msi::Inventory {
+            product_code: "{01234567-89AB-CDEF-0123-456789ABCDEF}".into(),
+            build: release.build,
+            hashes: BTreeMap::new(),
+        };
+        let legacy = LegacyPlan {
+            schema: 1,
+            local: false,
+            rollback_package: true,
+            transaction: "a".repeat(32),
+            candidate: release.clone(),
+            previous: release,
+            candidate_inventory: inventory.clone(),
+            previous_inventory: inventory,
+            sessions: vec![],
+            reboot_marker_armed: false,
+            lock_handle: "0000000000000001".into(),
+            worker_pid: 1,
+            worker_created_filetime: "0000000000000002".into(),
+            worker_sha256: "b".repeat(64),
+        };
+        let old = serde_json::to_value(legacy).unwrap();
+        for version in ["0.3.3", "0.3.4", "0.3.5", "0.3.6"] {
+            let mut original = old.clone();
+            if version == "0.3.6" {
+                original["channel"] = serde_json::json!("stable");
+            }
+            let bytes = serde_json::to_vec(&original).unwrap();
+            let mut plan: Plan = feed::strict_json(&bytes).unwrap();
+            plan.lock_handle = "0000000000000003".into();
+            plan.worker_pid = 4;
+            plan.worker_created_filetime = "0000000000000005".into();
+            let rewritten = relaunch_plan(&bytes, &plan).unwrap();
+            if version == "0.3.6" {
+                feed::strict_json::<LegacyPlan036>(&rewritten).unwrap();
+            } else {
+                feed::strict_json::<LegacyPlan>(&rewritten).unwrap();
+            }
+            let mut actual: serde_json::Value = serde_json::from_slice(&rewritten).unwrap();
+            for key in ["lock_handle", "worker_pid", "worker_created_filetime"] {
+                actual[key] = original[key].clone();
+            }
+            assert_eq!(actual, original, "{version}");
+            // A typed reserialization reproduces the actual old-reader failure.
+            if version != "0.3.6" {
+                assert!(feed::strict_json::<LegacyPlan>(&serde_json::to_vec(&plan).unwrap()).is_err());
+            }
+        }
+    }
+    #[test]
     fn local_package_pins_do_not_confer_manifest_authority() {
         let local = PackageTrust::Local(LocalRoots {
             signer_spki_sha256: vec!["a".repeat(64)],
         });
         assert_eq!(local.pins(), ["a".repeat(64)]);
         assert!(matches!(local.feed(), Err(Error::Policy)));
+    }
+    #[test]
+    fn install_reverifies_that_the_stored_catalog_still_routes_to_the_candidate() {
+        use super::super::test_catalog as fixture;
+        let public = fixture::public();
+        let trust = fixture::trust(&public);
+        let catalog = fixture::verified(&fixture::payload(), Channel::Beta).unwrap();
+        let release =
+            |build| transaction_release(catalog.catalog().releases.iter().find(|r| r.build == build).unwrap()).unwrap();
+        let inventory = |build| msi::Inventory {
+            product_code: "{01234567-89AB-CDEF-0123-456789ABCDEF}".into(),
+            build,
+            hashes: BTreeMap::new(),
+        };
+        let plan = |candidate| Plan {
+            schema: 1,
+            local: false,
+            rollback_package: true,
+            transaction: "0".repeat(32),
+            channel: Channel::Beta,
+            candidate: release(candidate),
+            previous: release(305001),
+            candidate_inventory: inventory(candidate),
+            previous_inventory: inventory(305001),
+            sessions: vec![],
+            reboot_marker_armed: false,
+            lock_handle: String::new(),
+            worker_pid: 0,
+            worker_created_filetime: String::new(),
+            worker_sha256: String::new(),
+        };
+        let bytes = fixture::envelope(&fixture::payload());
+        let admits = |bytes: &[u8], plan: &Plan, machine: &MachinePolicy| {
+            catalog_admits(bytes, &trust, plan, machine, 26200, fixture::NOW)
+        };
+        let machine = MachinePolicy::default();
+        assert_eq!(admits(&bytes, &plan(307001), &machine), Ok(()));
+        // The catalog routes this installation to another build.
+        assert_eq!(admits(&bytes, &plan(306002), &machine), Err(Error::Policy));
+        let mut stable = plan(307001);
+        stable.channel = Channel::Stable;
+        assert_eq!(admits(&bytes, &stable, &machine), Err(Error::Policy));
+        let mut quarantined = MachinePolicy::default();
+        quarantined.quarantine.insert(307001);
+        assert_eq!(admits(&bytes, &plan(307001), &quarantined), Err(Error::Policy));
+        let mut newer = MachinePolicy::default();
+        newer.watermarks.insert(
+            catalog_watermark(Channel::Beta),
+            feed::Watermark {
+                sequence: 6,
+                payload_sha256: String::new(),
+                last_verified_unix: 0,
+            },
+        );
+        assert_eq!(admits(&bytes, &plan(307001), &newer), Err(Error::Replay));
+        let mut manual = fixture::payload();
+        manual["rules"] = serde_json::json!([{"installed":[0,2147483647],"kind":"manual","target":"latest"}]);
+        assert_eq!(
+            admits(&fixture::envelope(&manual), &plan(307001), &machine),
+            Err(Error::Policy)
+        );
     }
     #[test]
     fn committed_candidate_inventory_survives_for_rollback_without_another_msi_inspection() {

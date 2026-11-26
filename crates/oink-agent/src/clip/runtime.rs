@@ -35,7 +35,8 @@ pub(crate) fn start_link_runtime(
             config.settings.clipboard.unwrap_or_else(default_settings),
         )
     };
-    let paused = group.applied().paused;
+    // The owner's decision, not its publication (see `ClipHandle::config_state_changed`).
+    let paused = node.fully_paused();
     let data_dir = node.cache_dir();
     std::fs::create_dir_all(&data_dir)?;
     let clock = clock::Clock::load(node.data_dir().join("clipboard-clock.json"))?;
@@ -65,6 +66,8 @@ pub(crate) fn start_link_runtime(
         receive_policy: oink_clipboard::policy::SharingPolicy::new(enabled && !paused && settings.receive),
         enabled: AtomicBool::new(enabled),
         paused: AtomicBool::new(paused),
+        changes: Mutex::default(),
+        generation: AtomicU64::new(0),
         activity: Mutex::default(),
         transfer: Mutex::default(),
         dnd_files: Mutex::default(),
@@ -209,7 +212,7 @@ impl Task {
                     });
                 },
                 change=changes.next()=>match change {
-                    Some(ConfigChange::State{..})=>handle.set_paused(group.applied().paused),
+                    Some(ConfigChange::State{..})=>handle.config_state_changed(&node),
                     Some(ConfigChange::Facts{device,capabilities_changed})=>self.streams.facts_changed(device,capabilities_changed),
                     Some(_)=>{},None=>break,
                 },
@@ -231,7 +234,9 @@ impl Task {
                     },
                     Some(Input::Applied{id,ticket,publication})=>self.applied(id,ticket,publication),
                     Some(Input::LocalChange(count))=>if self.active(){self.observe(count);},
-                    Some(Input::Reconfigure)=>self.reconfigure(),
+                    Some(Input::Reconfigure(generation))=>if generation == self.shared.generation.load(Ordering::Acquire) {
+                        self.reconfigure();
+                    },
                     Some(Input::FetchFiles)=>self.fetch(),
                     Some(Input::CancelFiles)=>{self.cancel_native_write();self.fetch_requested=None;self.cancelled=self.current_id();if let Some(mut status)=handle.transfer(){status.phase=FileTransferPhase::Cancelled;self.set_transfer(Some(status));}},
                     #[cfg(target_os = "macos")]
