@@ -23,9 +23,11 @@ pub(crate) fn sample_spec() -> pulse::sample::Spec {
 }
 
 /// A threaded-mainloop connection ready for introspection and stream setup.
+/// Field order is teardown order: the context must unref before the mainloop
+/// it registered its io watch on is freed.
 pub(crate) struct Connection {
-    pub(crate) mainloop: Mainloop,
     pub(crate) context: Context,
+    pub(crate) mainloop: Mainloop,
 }
 
 impl Connection {
@@ -38,7 +40,23 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        // Freeing a mainloop with events still in flight aborts inside
+        // libpulse (cleanup_io_events / pa_queue_free). pa_* calls belong
+        // under the mainloop lock, so disconnect locked, drain until the
+        // context reports Terminated, then stop. Mirrors DemandMonitor::drop.
+        self.mainloop.lock();
         self.context.disconnect();
+        self.mainloop.unlock();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            self.mainloop.lock();
+            let state = self.context.get_state();
+            self.mainloop.unlock();
+            if matches!(state, State::Terminated) || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
         self.mainloop.stop();
     }
 }
