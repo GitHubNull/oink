@@ -1075,6 +1075,27 @@ fn projected_payloads_serve_foreign_targets_without_a_native_translator() {
     assert_eq!(read_all(&mut same).unwrap(), b"hello\nworld");
 }
 
+#[test]
+fn decode_standard_preserves_linux_privacy_markers_for_foreign_targets() {
+    let rep = Representation {
+        id: RepresentationId(1),
+        format: NativeFormat::LinuxAtom(crate::formats::LINUX_MARKERS[0].into()),
+        medium: Medium::Bytes,
+        aspect: 1,
+        index: -1,
+        standard: Some(StandardFormat::Privacy),
+        data: RepresentationData::Inline(crate::formats::LINUX_SECRET.to_vec()),
+    };
+    assert_eq!(
+        decode_standard(&rep, crate::formats::LINUX_SECRET).unwrap(),
+        vec![ClipData::Custom {
+            platform: ClipPlatform::Linux,
+            name: crate::formats::LINUX_MARKERS[0].into(),
+            bytes: crate::formats::LINUX_SECRET.to_vec(),
+        }]
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn conversion_failure_is_committed_per_representation_for_clipboard_and_drop() {
     struct OneFailure(Unavailable);

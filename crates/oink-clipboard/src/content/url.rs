@@ -383,6 +383,8 @@ pub(crate) mod tests {
                     NativeFormat::WindowsPredefined(13)
                 } else if platform == ClipPlatform::Mac {
                     NativeFormat::Mac((*name).into())
+                } else if platform == ClipPlatform::Linux {
+                    NativeFormat::LinuxAtom((*name).into())
                 } else {
                     NativeFormat::WindowsRegistered((*name).into())
                 },

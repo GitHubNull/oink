@@ -356,11 +356,16 @@ fn foreign_ids(rep: &Representation, clipboard: bool) -> Vec<u16> {
         Some(StandardFormat::Png) if clipboard => vec![formats.png as u16, 8, 17],
         Some(StandardFormat::Png) => vec![formats.png as u16, 17, 8],
         Some(StandardFormat::Privacy) => {
-            let (NativeFormat::Mac(name), RepresentationData::Inline(bytes)) = (&rep.format, &rep.data) else {
+            let (platform, name) = match &rep.format {
+                NativeFormat::Mac(name) => (ClipPlatform::Mac, name),
+                NativeFormat::LinuxAtom(name) => (ClipPlatform::Linux, name),
+                _ => return Vec::new(),
+            };
+            let RepresentationData::Inline(bytes) = &rep.data else {
                 return Vec::new();
             };
             super::super::prepare(
-                &[crate::formats::custom(ClipPlatform::Mac, name, bytes.clone())],
+                &[crate::formats::custom(platform, name, bytes.clone())],
                 crate::Sensitivity::Normal,
             )
             .into_iter()
@@ -826,6 +831,39 @@ pub(crate) mod tests {
             );
             source.inventory.items[0].representations[0].standard = Some(StandardFormat::Png);
             source.inventory.items[0].representations[1].standard = Some(StandardFormat::Privacy);
+            let target = build(NativeSpec {
+                inventory: source.inventory(),
+                contents: Arc::new(source),
+                files: vec![],
+                file_contents: None,
+                sensitivity: crate::Sensitivity::Concealed,
+            })
+            .unwrap();
+            let privacy = super::super::super::formats();
+            for cf in [privacy.exclude_monitor, privacy.can_include_history] {
+                let f = target.formats().into_iter().find(|f| f.cfFormat as u32 == cf).unwrap();
+                let mut value = target
+                    .get(&f, || super::diagnostics::Publication::new().observe(None))
+                    .unwrap();
+                assert_eq!(medium::serialize(&value, Medium::HGlobal).unwrap(), [0; 4]);
+                // SAFETY: this test owns the returned medium.
+                unsafe { ReleaseStgMedium(&mut value) };
+            }
+        });
+    }
+    #[test]
+    fn concealed_linux_marker_is_written_as_windows_exclusions() {
+        use crate::content::url::tests::source;
+        super::super::tests::sta(|| {
+            let mut source = source(
+                ClipPlatform::Linux,
+                &[
+                    ("x-kde-passwordManagerHint", b"secret".to_vec()),
+                    ("UTF8_STRING", b"private".to_vec()),
+                ],
+            );
+            source.inventory.items[0].representations[0].standard = Some(StandardFormat::Privacy);
+            source.inventory.items[0].representations[1].standard = Some(StandardFormat::Text);
             let target = build(NativeSpec {
                 inventory: source.inventory(),
                 contents: Arc::new(source),
