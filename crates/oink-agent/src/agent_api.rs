@@ -554,7 +554,7 @@ fn alerts(node: &Node) -> Vec<Alert> {
     // failures. They are not display enumeration outcomes, and peer failures
     // belong to that device's resource card, never to a local display toast.
     if let Ok(status) = node.input_status()
-        && let Some(alert) = display_failure_alert(node.id(), &status, now)
+        && let Some(alert) = display_failure_alert(node.id(), &status, pause.reason, now)
     {
         out.push(alert);
     }
@@ -572,7 +572,17 @@ fn alerts(node: &Node) -> Vec<Alert> {
     out
 }
 
-fn display_failure_alert(device: DeviceId, status: &crate::threads::input::InputStatus, now: i64) -> Option<Alert> {
+fn display_failure_alert(
+    device: DeviceId,
+    status: &crate::threads::input::InputStatus,
+    pause_reason: crate::device_cards::PauseReason,
+    now: i64,
+) -> Option<Alert> {
+    // RDP deliberately withholds native displays. An empty input catalog is
+    // expected there, rather than a failed attempt to enumerate the console.
+    if pause_reason == crate::device_cards::PauseReason::RemoteDesktop {
+        return None;
+    }
     let fault = status.display_enumeration_fault;
     if !matches!(
         fault,
@@ -725,8 +735,11 @@ pub(crate) fn default_hotkeys() -> Vec<Hotkey> {
         device: None,
         profile: None,
         keys: keys.iter().map(|s| s.to_string()).collect(),
-        // Window opening and microphone mute are opt-in.
-        enabled: !matches!(a, HotkeyAction::OpenWindow | HotkeyAction::ToggleMicrophoneMute),
+        // Window opening, microphone mute and next-device movement are opt-in.
+        enabled: !matches!(
+            a,
+            HotkeyAction::OpenWindow | HotkeyAction::ToggleMicrophoneMute | HotkeyAction::MovePointerNext
+        ),
     };
     vec![
         k(HotkeyAction::LockFocus, &["Ctrl", "Alt", "L"]),
@@ -738,6 +751,7 @@ pub(crate) fn default_hotkeys() -> Vec<Hotkey> {
         k(HotkeyAction::OpenWindow, &["Ctrl", "Alt", "A"]),
         k(HotkeyAction::ToggleGameMode, &["Ctrl", "Alt", "G"]),
         k(HotkeyAction::ToggleMicrophoneMute, &["Ctrl", "Alt", "M"]),
+        k(HotkeyAction::MovePointerNext, &["Ctrl", "Alt", "N"]),
     ]
 }
 
@@ -893,6 +907,14 @@ impl AgentApi for Node {
     }
     fn set_member_address(&self, device: DeviceKey, address: String) -> ApiResult<()> {
         self.link_config()?.set_member_address(device.0, address)
+    }
+    fn move_device_order(&self, device: DeviceKey, placement: crate::api::DeviceOrderPlacement) -> ApiResult<()> {
+        use oink_network::device_order::Placement;
+        let placement = match placement {
+            crate::api::DeviceOrderPlacement::Above(anchor) => Placement::Above(anchor.0),
+            crate::api::DeviceOrderPlacement::After(anchor) => Placement::After(anchor.0),
+        };
+        self.link_config()?.move_device_order(device.0, placement)
     }
     fn nearby(&self) -> ApiResult<pairing::NearbySnapshot> {
         Ok((*self.link_config()?.nearby()).clone())
@@ -2102,6 +2124,7 @@ mod permission_tests {
                         display_enumeration_fault: source,
                         ..Default::default()
                     },
+                    crate::device_cards::PauseReason::None,
                     0,
                 )
                 .is_none()
@@ -2114,6 +2137,7 @@ mod permission_tests {
                     display_enumeration_fault: Some(failure),
                     ..Default::default()
                 },
+                crate::device_cards::PauseReason::None,
                 10,
             )
             .unwrap();
@@ -2138,7 +2162,18 @@ mod permission_tests {
             },
             ..Default::default()
         };
-        assert!(display_failure_alert(DeviceId([1; 32]), &status, 0).is_none());
+        assert!(display_failure_alert(DeviceId([1; 32]), &status, crate::device_cards::PauseReason::None, 0).is_none());
+    }
+
+    #[test]
+    fn remote_desktop_does_not_warn_about_deliberately_withheld_displays() {
+        use crate::device_cards::PauseReason;
+        let status = crate::threads::input::InputStatus {
+            display_enumeration_fault: Some(dto::ResourceFaultCode::DeviceUnavailable),
+            ..Default::default()
+        };
+        assert!(display_failure_alert(DeviceId([1; 32]), &status, PauseReason::RemoteDesktop, 0).is_none());
+        assert!(display_failure_alert(DeviceId([1; 32]), &status, PauseReason::LocalUser, 0).is_some());
     }
 
     #[test]

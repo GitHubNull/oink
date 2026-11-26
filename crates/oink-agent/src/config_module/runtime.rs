@@ -267,6 +267,8 @@ pub(super) struct Owner {
     last_state: Instant,
     displays: Vec<DisplayInfo>,
     displays_observed: bool,
+    #[cfg(windows)]
+    pub(super) require_console_displays: bool,
     display_layout_dependency: Option<(GroupId, dto::ConfigVersion)>,
     detached: detached::DetachedScreens,
     discovery: Option<Arc<Discovery>>,
@@ -422,6 +424,7 @@ impl Owner {
             group: anchor.group,
             roster_digest: state.roster().digest().map_err(|e| fail(&e))?,
             pointer_slots: state.pointer_slots().map_err(|e| fail(&e))?,
+            device_order: state.device_order().map_err(|e| fail(&e))?,
             members: state.roster().members().map(|m| m.device).collect(),
             layout: layout.clone(),
             owners: owners.clone(),
@@ -554,6 +557,8 @@ impl Owner {
             last_state: Instant::now(),
             displays: vec![],
             displays_observed: false,
+            #[cfg(windows)]
+            require_console_displays: false,
             display_layout_dependency: None,
             detached,
             discovery: None,
@@ -1354,11 +1359,16 @@ impl Owner {
                     .into_iter()
                     .find(|register| register.kind() == Ok(2))
                     .ok_or(v1::ErrorCode::MalformedFrame)?;
+                let order_kind = oink_network::device_order::REGISTER_KIND;
+                let incoming_order = state.registers()?.0.into_iter().find(|r| r.kind() == Ok(order_kind));
                 let candidate = self.state.receive_update(&state, peer.device_id, self.identity.id())?;
                 // A stale or losing concurrent layout update is valid input,
                 // but the sender must learn the register selected by our
-                // counter-only merge and device-id tie-break.
-                let resend_layout = candidate.layout()? != incoming_layout;
+                // counter-only merge and device-id tie-break. The device order
+                // register converges the same way; a 0.3.x sender without it
+                // relays it opaquely once it has been sent.
+                let resend_layout =
+                    candidate.layout()? != incoming_layout || candidate.register(order_kind)? != incoming_order;
                 let local_removed = !candidate.roster().contains(self.identity.id());
                 let removed = self
                     .sessions

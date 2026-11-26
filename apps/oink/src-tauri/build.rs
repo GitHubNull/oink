@@ -5,11 +5,6 @@ fn main() {
     if !matches!(target_os.as_str(), "macos" | "linux" | "windows") {
         return;
     }
-    if target_os == "macos" {
-        // The UI is a LaunchServices helper inside the host app. Sparkle lives
-        // in the outer app's Frameworks directory, shared with the backend.
-        println!("cargo:rustc-link-arg-bin=oink=-Wl,-rpath,@executable_path/../../../../Frameworks");
-    }
     // The cfg attribute must not wrap the if/else: on a Linux host that would
     // remove tauri_build entirely, leaving capabilities and core-command ACLs
     // out of the binary.

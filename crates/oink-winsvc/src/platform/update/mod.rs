@@ -13,11 +13,44 @@ mod task;
 mod worker;
 use oink_update::{
     Error,
-    feed::{Release, Watermark},
+    catalog::{self, OsVersion},
+    feed::{Channel, Release, Severity, Watermark},
     policy::*,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+const ARCH: &str = "x64";
+/// v2 replay watermark of one channel's catalog. The v1 "stable" entry stays
+/// for older services and is not read here.
+fn catalog_watermark(channel: Channel) -> String {
+    format!("v2-{}", channel.as_str())
+}
+fn os_version(windows_build: u32) -> OsVersion {
+    OsVersion([10, 0, windows_build])
+}
+/// Transactions (plan, rollback cache, MSI inspection) record the v1 release
+/// shape; a verified v2 catalog release maps onto it field for field.
+fn transaction_release(release: &catalog::Release) -> Result<Release, Error> {
+    let OsVersion([10, 0, minimum_windows_build]) = OsVersion::parse(&release.minimum_os)? else {
+        return Err(Error::Metadata);
+    };
+    Ok(Release {
+        build: release.build,
+        version: release.version.clone(),
+        tag: release.tag.clone(),
+        source_tree_sha256: release.source_tree_sha256.clone(),
+        architecture: ARCH.into(),
+        minimum_windows_build,
+        protocol_baseline: release.protocol_baseline,
+        minimum_updater_schema: release.minimum_updater_schema,
+        channel: release.channel,
+        // How an update is offered comes from the catalog rules, not the release.
+        severity: Severity::Normal,
+        notes: release.notes.clone(),
+        package: release.package.clone(),
+    })
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +92,9 @@ struct Plan {
     #[serde(default = "yes")]
     rollback_package: bool,
     transaction: String,
+    /// Catalog the candidate was selected from; local plans have none.
+    #[serde(default)]
+    channel: Channel,
     candidate: Release,
     previous: Release,
     candidate_inventory: msi::Inventory,
@@ -106,13 +142,46 @@ fn installed() -> Result<msi::Receipt, Error> {
     let path = protected::root().map_err(|_| Error::Storage)?.join("installed.json");
     oink_update::feed::strict_json(&protected::read(&path, 65536)?)
 }
-pub(super) fn pending() -> bool {
-    protected::maintenance()
-        .map(|p| p.join("pending.json").exists())
-        .unwrap_or(true)
+// Cached observations are for admission/status only. Privileged transaction
+// effects always re-read protected records under the maintenance lock. Directory
+// rename events invalidate this snapshot, including writes by an older worker.
+static OBSERVATION: std::sync::Mutex<Option<Result<Option<oink_update::transaction::Journal>, Error>>> =
+    std::sync::Mutex::new(None);
+fn invalidate_observation() {
+    *OBSERVATION.lock().unwrap() = None;
 }
-pub(super) fn maintenance_notifications() -> std::io::Result<super::wake::Directory> {
-    super::wake::Directory::new(&protected::maintenance()?)
+fn journal() -> Result<Option<oink_update::transaction::Journal>, Error> {
+    let mut cached = OBSERVATION.lock().unwrap();
+    cached
+        .get_or_insert_with(|| {
+            let path = protected::maintenance()
+                .map_err(|_| Error::Storage)?
+                .join("pending.json");
+            if !path.exists() {
+                return Ok(None);
+            }
+            oink_update::transaction::Journal::parse(&protected::read(&path, 65536)?).map(Some)
+        })
+        .clone()
+}
+pub(super) fn pending() -> bool {
+    journal().map_or(true, |journal| journal.is_some())
+}
+pub(super) struct MaintenanceNotifications(super::wake::Directory);
+impl MaintenanceNotifications {
+    pub(super) fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0.raw()
+    }
+    pub(super) fn rearm(&mut self) -> std::io::Result<()> {
+        self.0.rearm()?;
+        invalidate_observation();
+        Ok(())
+    }
+}
+pub(super) fn maintenance_notifications() -> std::io::Result<MaintenanceNotifications> {
+    let notifications = MaintenanceNotifications(super::wake::Directory::new(&protected::maintenance()?)?);
+    invalidate_observation();
+    Ok(notifications)
 }
 pub fn request(request: oink_update::ipc::Request) -> Result<oink_update::ipc::Reply, Error> {
     pipe::request(request)
@@ -124,17 +193,46 @@ pub fn run_worker() -> Result<(), Error> {
     worker::run()
 }
 
+fn committed_build(journal: &oink_update::transaction::Journal, installed_build: u64) -> bool {
+    journal.stage == oink_update::transaction::Stage::Committed && installed_build == journal.new_build
+}
+
+pub(super) fn completed() -> bool {
+    let check = || -> Result<bool, Error> {
+        let Some(journal) = journal()? else {
+            return Ok(false);
+        };
+        let installed = installed()?.build;
+        Ok(committed_build(&journal, installed)
+            || journal.stage == oink_update::transaction::Stage::RolledBack && installed == journal.old_build)
+    };
+    check().unwrap_or(false)
+}
+
+pub(super) fn launch_error() -> Option<&'static str> {
+    match journal() {
+        Err(_) => Some("oink_update_storage_unsafe"),
+        Ok(None) => None,
+        Ok(Some(journal)) => match installed() {
+            Err(_) => Some("oink_update_storage_unsafe"),
+            Ok(receipt)
+                if committed_build(&journal, receipt.build)
+                    || journal.stage == oink_update::transaction::Stage::RolledBack
+                        && receipt.build == journal.old_build =>
+            {
+                None
+            }
+            Ok(_) => Some("oink_update_in_progress"),
+        },
+    }
+}
+
 pub(super) fn input_allowed() -> bool {
-    if !pending() {
+    if !pending() || completed() {
         return true;
     }
     let check = || -> Result<bool, Error> {
-        let journal = oink_update::transaction::Journal::parse(&protected::read(
-            &protected::maintenance()
-                .map_err(|_| Error::Storage)?
-                .join("pending.json"),
-            65536,
-        )?)?;
+        let journal = journal()?.ok_or(Error::Transaction)?;
         Ok(transaction_dir(&journal.transaction)?
             .join("health-authorized.json")
             .exists())
@@ -147,8 +245,49 @@ fn yes() -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/catalog.rs"]
+mod test_catalog;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn terminal_cleanup_requires_commit_and_the_exact_installed_candidate() {
+        use oink_update::transaction::{Journal, Stage};
+        let mut journal = Journal::new("a".repeat(32), 1, 2, "b".repeat(64)).unwrap();
+        for stage in [
+            Stage::Prepared,
+            Stage::Replacing,
+            Stage::HealthCheck,
+            Stage::RepairRequired,
+            Stage::RolledBack,
+            Stage::Committed,
+        ] {
+            journal.stage = stage;
+            assert_eq!(committed_build(&journal, 2), stage == Stage::Committed);
+            assert!(!committed_build(&journal, 1));
+            assert!(!committed_build(&journal, 3));
+        }
+    }
+    #[test]
+    fn catalog_releases_map_onto_the_transaction_release() {
+        let catalog = test_catalog::verified(&test_catalog::payload(), Channel::Beta).unwrap();
+        let release = &catalog.catalog().releases[1];
+        let mapped = transaction_release(release).unwrap();
+        assert_eq!(
+            (mapped.build, mapped.minimum_windows_build, mapped.architecture.as_str()),
+            (release.build, 17763, "x64")
+        );
+        assert_eq!(
+            (&mapped.package, &mapped.notes, mapped.channel),
+            (&release.package, &release.notes, release.channel)
+        );
+        for minimum in ["11.0.22000", "10.1.1"] {
+            let mut other = release.clone();
+            other.minimum_os = minimum.into();
+            assert_eq!(transaction_release(&other), Err(Error::Metadata), "{minimum}");
+        }
+    }
     #[test]
     fn legacy_machine_policy_preserves_checks_and_stable_watermark() {
         for channel in ["stable", "beta"] {
@@ -167,7 +306,7 @@ mod tests {
                 let saved = serde_json::to_value(policy).unwrap();
                 assert_eq!(
                     saved["policy"]["preferences"],
-                    serde_json::json!({"checks_enabled": checks_enabled})
+                    serde_json::json!({"checks_enabled": checks_enabled, "update_channel": null, "install_after_download": true})
                 );
             }
         }

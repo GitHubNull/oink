@@ -1331,12 +1331,12 @@ quick-xml 0.42.0 (MIT)
 Copyright (c) 2016 Johann Tuffe
 Full terms: licenses/texts/f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc.txt
 
-quinn-proto 0.11.18 (MIT)
+quinn-proto 0.11.19 (MIT)
 Copyright (c) 2018 The quinn Developers
 Full terms: licenses/texts/4b2d0aca6789fa39e03d6738e869ea0988cceba210ca34ebb59c15c463e93a04.txt
 Full terms: licenses/texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt
 
-quinn-udp 0.5.15 (MIT)
+quinn-udp 0.5.16 (MIT)
 Copyright (c) 2018 The quinn Developers
 Full terms: licenses/texts/4b2d0aca6789fa39e03d6738e869ea0988cceba210ca34ebb59c15c463e93a04.txt
 Full terms: licenses/texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt
@@ -2370,20 +2370,6 @@ Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
 Full terms: licenses/texts/01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551.txt
 Full terms: licenses/texts/60ae834c956b7c0dfda16a00495374cfdb13a3cf045dbe11a06453c8217c1a5e.txt
 Full terms: licenses/texts/f9fd849e652219ce98e008303370b352d37663d0ffb27b8dc514ad93c9c7438b.txt
-
-Sparkle 2.9.6 (MIT AND BSD-2-Clause AND Zlib)
-Copyright (c) 2006-2013 Andy Matuschak.
-Copyright (c) 2008-2010 Yuta Mori All Rights Reserved.
-Copyright (c) 2009-2013 Elgato Systems GmbH.
-Copyright (c) 2011 Mark Hamlin.
-Copyright (c) 2011-2014 Kornel Lesiński.
-Copyright (c) 2014 Big Nerd Ranch.
-Copyright (c) 2014 C.W. Betts.
-Copyright (c) 2014 Petroules Corporation.
-Copyright (c) 2015 Orson Peters <orsonpeters@gmail.com>
-Copyright (c) 2015-2017 Mayur Pawashe.
-Copyright 2003-2005 Colin Percival
-Full terms: licenses/texts/389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe.txt
 
 VB-CABLE 45 (LicenseRef-VB-CABLE-Donationware)
 Copyrights V.Burel©2010-2024 All rights reserved.
