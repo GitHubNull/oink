@@ -220,7 +220,7 @@ export const SECTIONS: SectionMeta[] = [
                 }, get desc() {
                     return tr('音频转发到本机时，用哪个设备播放');
                 }, get keywords() { return tr('扬声器 耳机 声音 出口'); } },
-            { id: 'keepLocalPlayback', get label() {
+            { id: 'keepLocalPlayback', not: 'linux', get label() {
                     return tr('转发同时保持本机播放');
                 }, get desc() {
                     return tr('音频发送到其他设备时，本机扬声器/耳机保持播放');

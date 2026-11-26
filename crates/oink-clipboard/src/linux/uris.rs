@@ -122,11 +122,14 @@ pub(crate) fn list(paths: &[PathBuf]) -> Vec<u8> {
 }
 
 /// `x-special/gnome-copied-files`: a `copy` header, then LF-separated URIs.
+/// Nemo's parser keeps a trailing empty line as a real (empty) entry and its
+/// copy job then errors on it, so the last URI must not be newline-terminated
+/// — match Nemo's own writer, which prepends the LF before each URI.
 pub(crate) fn gnome(paths: &[PathBuf]) -> Vec<u8> {
-    let mut out = b"copy\n".to_vec();
+    let mut out = b"copy".to_vec();
     for path in paths {
-        write_uri(&mut out, path);
         out.push(b'\n');
+        write_uri(&mut out, path);
     }
     out
 }
@@ -170,5 +173,14 @@ mod tests {
         assert_eq!(parse(&list(&paths), false).unwrap(), paths);
         assert_eq!(parse(&gnome(&paths), true).unwrap(), paths);
         assert!(list(&paths).starts_with(b"file:///tmp/a%20b/"));
+    }
+
+    #[test]
+    fn gnome_flavor_matches_nemo_writer_exactly() {
+        // Nemo's parser treats a trailing empty line as a real (empty) file
+        // entry, so the last URI must not be newline-terminated.
+        let paths = vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")];
+        assert_eq!(gnome(&paths), b"copy\nfile:///tmp/a\nfile:///tmp/b");
+        assert_eq!(gnome(&[]), b"copy");
     }
 }
