@@ -165,7 +165,8 @@ impl Source {
     }
     fn maybe_commit(&mut self) -> bool {
         if self.phase == Phase::Released && self.demand {
-            self.phase = if self.exported {
+            self.phase = if self.exported || self.native_closed {
+                // No native session is left to finish; only storage remains.
                 Phase::Receiving
             } else {
                 Phase::Committing
@@ -223,6 +224,17 @@ impl Source {
         self.advance();
         self.native_closed = true;
         true
+    }
+    /// The user's release landed on the held catcher before any host demand:
+    /// the source's native drag is over, but the remote holder still owes its
+    /// own drop and the promise must keep serving it.
+    pub fn native_accepted_before_demand(&mut self) {
+        self.native = NativeObservation::EndedAccepted;
+        self.native_closed = true;
+        self.advance();
+    }
+    pub fn native_closed(&self) -> bool {
+        self.native_closed
     }
     /// Record durable target storage independently of native completion. A
     /// still-running native Drop may need its provider to finish snapshotting;

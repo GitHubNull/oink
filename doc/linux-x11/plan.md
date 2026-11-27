@@ -565,3 +565,11 @@ python3 -m unittest discover -s build-support -p 'test_*.py' -v
 - **产物**：`target/debug/oink`（custom-protocol，15:57）、`oink-agent`/`oink-backend`、阶段 5 四个探针示例与 `phase4_overlay_load` 同树构建。
 - 证据根 `.release-tools/linux-probes/phase6-gate-2026-11-23/w7/`（gitignored）：`gates-summary.txt`、`matrix.md`（阶段 6 功能矩阵）、`real-session-checklist.md`（新增音频 F/G/H 节，A–E 仍待用户）。
 - 交接：阶段 7（协议、设置与桌面配套）交接文档 [2026-11-23-linux-x11-phase7-handoff.md](../handover/2026-11-23-linux-x11-phase7-handoff.md)。
+
+## 2026-11-27 本机→Windows 拖文件移交失败修复
+
+- **用户报告**：拖文件只能 Win11→本机；本机→Win11 不可行（复制粘贴正常）。
+- **诊断证据**（本机诊断包 `1795735155539-manual-259` 解码）：本机 9 次拖拽全部在左缘 x=0 进入 probing、8 次捕获内容到 ready（每次 kind_mask=17/items=7/files=2，33 次 Detected），但 0 次 leaving/ever_held；拖拽期间实测 `PointerDelta`（光标位置差）在钳制帧恒为 dx=0，仅 `RawPointerDelta`（设备流）保持 -10…-68/帧。越阈需要单次手势累计 0.024×本机对角线（1920×1080≈53px）外推，到达缘那几帧最多约 30px（0.0136），唯一单帧 -70px 的一次未捕获到内容。结论：X11 边缘钳制使实测增量丢失外推分量，本机→对端拖拽实际被堵死；反方向（Windows 大滑动单帧即可）不受影响。
+- **修复**：新增 `Router::dnd_wall_push`（`crates/oink-routing/src/router/dnd.rs`），`RawPointerDelta` 分发时若正处于本机原生拖拽的 probing 手势、光标被钳在探测边、设备原始增量仍朝外，则用同一原始增量走既有 `dnd_push` 累加压力；阈值 `dnd_push_fraction`、边缘身份与全部闸门不变，其他平台只在同样的贴墙场景下获得同一修正。
+- **验证**：新单测 `wall_pinned_raw_push_completes_a_native_drag_handoff`（贴边实测 0 增量的控制帧不越阈；切向/向内原始增量不加压；短帧不越阈；持续外推帧越过阈值进入 leaving）；`cargo test -p oink-routing` 459 通过 0 失败。`oink-backend`/`oink` 已按矩阵重建并重启整套，对端在线 2/2，UI 窗口保持开启。
+- **状态**：用户真实桌面手势复测通过（2026-11-27 晚，本机→Win11 与 Win11→本机拖文件均正常）；本批已本地提交、未推送。

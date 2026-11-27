@@ -68,7 +68,7 @@ impl Run {
     }
 
     fn place_catcher(&mut self, at: Point) {
-        let (x, y, w, h) = target::catcher_geometry(at);
+        let (x, y, w, h) = target::catcher_geometry(at, self.conn.root_size());
         self.conn.move_resize_window(self.catcher, x, y, w, h);
         self.conn.map_raised(self.catcher);
     }
@@ -196,7 +196,7 @@ impl Run {
             return false;
         }
         self.held = None;
-        let (x, y, w, h) = target::catcher_geometry(at.unwrap_or(self.probe_at));
+        let (x, y, w, h) = target::catcher_geometry(at.unwrap_or(self.probe_at), self.conn.root_size());
         self.replace_catcher(x, y, w, h);
         true
     }

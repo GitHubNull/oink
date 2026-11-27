@@ -1756,7 +1756,10 @@ impl Router {
         }
         let disposition = match ev.event {
             InputEvent::TouchpadSample(_) | InputEvent::TouchpadBoundary => Disposition::Pass,
-            InputEvent::RawPointerDelta { dx, dy } => self.raw_motion(dx, dy),
+            InputEvent::RawPointerDelta { dx, dy } => {
+                self.dnd_wall_push(dx, dy);
+                self.raw_motion(dx, dy)
+            }
             InputEvent::PointerDelta { dx, dy } => {
                 if !self.mouse_local() {
                     self.trail_motion(dx, dy, now);

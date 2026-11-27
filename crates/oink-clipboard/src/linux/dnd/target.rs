@@ -382,12 +382,26 @@ pub(super) fn detected_event(operation: DragOperation, items: Vec<ClipData>) -> 
     }
 }
 
-/// Normalize the requested probe point into catcher window geometry.
-pub(super) fn catcher_geometry(at: Point) -> (i32, i32, u32, u32) {
-    const SIZE: u32 = 8;
-    let x = (at.x.round() as i32).saturating_sub(SIZE as i32 / 2).max(0);
-    let y = (at.y.round() as i32).saturating_sub(SIZE as i32 / 2).max(0);
-    (x, y, SIZE, SIZE)
+/// Normalize the requested probe point into catcher window geometry: 8 px
+/// across the approached edge, 64 px along it. The normal axis keeps the old
+/// footprint, but the tangent length covers probe follow lag (12 reference
+/// units between `Probe` updates) so a drag sliding along the edge cannot
+/// leave the window before an authorized hold replaces it with the root span.
+pub(super) fn catcher_geometry(at: Point, root: (u32, u32)) -> (i32, i32, u32, u32) {
+    const DEPTH: i64 = 8;
+    const LONG: i64 = 64;
+    let width = i64::from(root.0);
+    let height = i64::from(root.1);
+    let x = at.x.round() as i64;
+    let y = at.y.round() as i64;
+    let along = |start: i64, limit: i64| start.clamp(0, (limit - LONG).max(0)) as i32;
+    let near = |value: i64, limit: i64| (value - DEPTH / 2).clamp(0, (limit - DEPTH).max(0)) as i32;
+    let left_or_right = x.abs().min((width - 1 - x).abs()) <= y.abs().min((height - 1 - y).abs());
+    if left_or_right {
+        (near(x, width), along(y - LONG / 2, height), DEPTH as u32, LONG as u32)
+    } else {
+        (along(x - LONG / 2, width), near(y, height), LONG as u32, DEPTH as u32)
+    }
 }
 
 #[cfg(test)]
@@ -395,9 +409,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catcher_geometry_centers_and_clamps_to_zero() {
-        assert_eq!(catcher_geometry(Point::new(100.0, 100.0)), (96, 96, 8, 8));
-        assert_eq!(catcher_geometry(Point::new(1.0, 3.0)), (0, 0, 8, 8));
+    fn catcher_geometry_extends_along_the_near_edge_and_clamps() {
+        let root = (1920, 1080);
+        assert_eq!(catcher_geometry(Point::new(2.0, 500.0), root), (0, 468, 8, 64));
+        assert_eq!(catcher_geometry(Point::new(1918.0, 500.0), root), (1912, 468, 8, 64));
+        assert_eq!(catcher_geometry(Point::new(900.0, 1.0), root), (868, 0, 64, 8));
+        assert_eq!(catcher_geometry(Point::new(900.0, 1078.0), root), (868, 1072, 64, 8));
+        assert_eq!(catcher_geometry(Point::new(1.0, 3.0), root), (0, 0, 8, 64));
+        assert_eq!(catcher_geometry(Point::new(0.0, 1075.0), root), (0, 1016, 8, 64));
+        assert_eq!(catcher_geometry(Point::new(100.0, 100.0), root), (96, 68, 8, 64));
     }
 
     #[test]

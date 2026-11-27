@@ -513,7 +513,11 @@ impl Router {
         }
         let exported = source.exported;
         let closed = source.phase == source::Phase::Closed;
-        if (commit && !exported) || cancel {
+        // A source whose native session already ended accepted (release onto
+        // the held catcher) has nothing left to finish natively; demand only
+        // gates serving the promise until the target stores it.
+        let native_closed = source.native_closed();
+        if (commit && !exported && !native_closed) || cancel {
             let at = cancel.then(|| self.dnd_cancel_geometry(offer, cancel_at)).flatten();
             self.dnd_submit_source_finish(offer, commit, at);
         }
@@ -602,6 +606,7 @@ impl Router {
     }
 
     fn dnd_source_ended(&mut self, id: ClipId, observation: NativeObservation) {
+        let me = self.me();
         let offer = Self::dnd_offer(id);
         let Some(source) = self.dnd.sources.get_mut(&offer) else {
             return;
@@ -612,6 +617,31 @@ impl Router {
         let catcher_lost = observation == NativeObservation::CatcherLost;
         let cancel_retired = observation == NativeObservation::CancelRetired;
         if cancel_retired && source.phase != source::Phase::Cancelling {
+            return;
+        }
+        // While held, the catcher spans this device's whole root and owns the
+        // pointer grab, so the user's release ends the native drag as an
+        // accepted drop here without ever surfacing as an input UP. That is
+        // the source-side release for the live remote handoff: publish it and
+        // keep the promise for the holder's own drop instead of closing it.
+        let remote_release = observation == NativeObservation::EndedAccepted
+            && source.holder.device != me
+            && (matches!(source.phase, source::Phase::Held | source::Phase::Released)
+                || (source.exported && source.phase == source::Phase::Local));
+        if remote_release {
+            let holder = source.holder;
+            if source.phase == source::Phase::Held {
+                source.released();
+            }
+            source.native_accepted_before_demand();
+            let mode = source.mode();
+            self.dnd.native_source = None;
+            if let Some(press) = self.dnd.presses.get_mut(&offer) {
+                press.physical_up();
+            }
+            self.dnd_return_source_press(offer);
+            self.dnd_publish_state(offer, DragState::Released { holder, mode });
+            self.out.push(Output::Dnd(DndCmd::ForgetSource { id }));
             return;
         }
         let accepted = observation == NativeObservation::EndedAccepted && source.phase == source::Phase::Committing;
@@ -1389,6 +1419,48 @@ impl Router {
                 }
             }
         }
+    }
+
+    /// 贴边时设备原始增量的外推分量。X11/Windows 在系统屏幕边缘把指针钳住：
+    /// 从到达边缘的那一帧起，实测 `PointerDelta` 的外推分量恒为 0，而设备流
+    /// `RawPointerDelta` 仍如实报告物理推力。把这份向外的推力记到正在探测的
+    /// 同一个手势上，压边才能完成原生拖拽移交；阈值、边缘身份和全部闸门仍由
+    /// `dnd_push` 决定。仅正在探测的本机拖拽走这里，其他状态不受影响。
+    pub(super) fn dnd_wall_push(&mut self, dx: f64, dy: f64) {
+        if !dx.is_finite() || !dy.is_finite() || (dx == 0. && dy == 0.) {
+            return;
+        }
+        let State::Probing { input, gesture, .. } = &self.dnd.state else {
+            return;
+        };
+        if *input != self.me() || gesture.landing.screen.device == self.me() || !self.handoff_blocked() {
+            return;
+        }
+        let normal = gesture.edge.normal;
+        let landing = gesture.landing.clone();
+        let Some(cur) = self.pointer.clone().filter(|p| p.screen.device == self.me()) else {
+            return;
+        };
+        let Some(display) = self.displays.iter().find(|d| d.key == cur.screen.display) else {
+            return;
+        };
+        let b = display.bounds;
+        let pinned = if normal.0 == 1. {
+            cur.local.x >= b.right() - super::EDGE_UNITS
+        } else if normal.0 == -1. {
+            cur.local.x < b.x + super::EDGE_UNITS
+        } else if normal.1 == 1. {
+            cur.local.y >= b.bottom() - super::EDGE_UNITS
+        } else if normal.1 == -1. {
+            cur.local.y < b.y + super::EDGE_UNITS
+        } else {
+            false
+        };
+        if !pinned || (dx * normal.0 + dy * normal.1) <= 0. {
+            return;
+        }
+        let at = cur.local;
+        self.dnd_push(self.me(), &cur, landing, (dx, dy), at);
     }
 
     /// Native probes and hosted drags share the same push gesture. Windows clamps

@@ -616,6 +616,95 @@ fn delayed_top_edge_detection_uses_current_tangent_mapping() {
 
 // Keep these review regressions on the production topology, whose wall sliding
 // and rigid same-computer seams are intentionally richer than SimpleLayout.
+
+fn wall_drag_ready() -> Router {
+    // Local A (1000×1000) with the peer B's screen to its left. The OS clamps
+    // the cursor at x=0, so measured deltas lose their outward component there
+    // while the device stream keeps reporting the physical push.
+    let l = Layout {
+        screens: vec![
+            placement(A, Rect::new(0., 0., 200., 200.)),
+            placement(B, Rect::new(-220., 0., 200., 200.)),
+        ],
+        ..Default::default()
+    };
+    let mut r = Router::new(
+        RouterConfig::new(
+            oink_foundation::session::Boot {
+                device_id: A,
+                nonce: [1; 16],
+            },
+            "local",
+            Os::Other,
+        ),
+        Arc::new(TopologyLayout::from_layout(&l, &Default::default())),
+    );
+    r.cfg.settings.dnd_push_fraction = 0.02;
+    r.set_local_displays(vec![DisplayInfo {
+        key: "screen".into(),
+        name: "screen".into(),
+        bounds: Rect::new(0., 0., 1000., 1000.),
+        pixel_width: 1000,
+        pixel_height: 1000,
+        reference_extent: None,
+        rotation_deg: 0,
+        is_primary: true,
+        is_builtin: false,
+        is_virtual: false,
+    }]);
+    r.test_connect(B, 0);
+    r.peers.get_mut(&B).unwrap().focus_ready = true;
+    r.test_message(B, Message::Dnd(crate::dnd::DndMsg::Caps { enabled: true }), 0);
+    r.set_dnd_available(true);
+    r.set_cursor(Point::new(5., 500.));
+    r.local_button(MouseButton::Left, true);
+    r.local_motion(-6., 0., Some(Point::new(0., 500.)), 1);
+    assert_eq!(r.dnd_state_name(), "probing");
+    r.on_dnd_event(DndEvent::Detected {
+        id: oink_foundation::content::ClipId {
+            origin: A,
+            seq: crate::dnd::DND_SEQ_BIT | 1,
+        },
+        items: vec![oink_foundation::clipboard::ClipData::Text("drag".into())],
+    });
+    assert_eq!(r.dnd_state_name(), "ready");
+    r.drain_outputs();
+    r
+}
+
+fn wall_raw(r: &mut Router, dx: f64, dy: f64, now: Micros) {
+    r.on_local_event(
+        &CapturedEvent {
+            physical: true,
+            event: InputEvent::RawPointerDelta { dx, dy },
+            source: SourceKind::Mouse,
+            time_us: now,
+            cursor: None,
+        },
+        now,
+    );
+    r.drain_outputs();
+}
+
+#[test]
+fn wall_pinned_raw_push_completes_a_native_drag_handoff() {
+    let mut r = wall_drag_ready();
+    // Measured frames at the clamp carry no outward component any more.
+    r.local_motion(0., 4., Some(Point::new(0., 504.)), 2);
+    assert_eq!(r.dnd_state_name(), "ready");
+    // Tangent and inward raw reports never add pressure.
+    wall_raw(&mut r, 0., 5., 3);
+    wall_raw(&mut r, 30., 0., 4);
+    assert_eq!(r.dnd_state_name(), "ready", "a raw push away from the wall crossed");
+    // A short raw frame below the remaining threshold still waits.
+    wall_raw(&mut r, -10., 0., 5);
+    assert_eq!(r.dnd_state_name(), "ready", "a single short raw frame crossed");
+    // The device keeps pushing into the clamped edge: the same gesture now
+    // crosses and the native drag is handed over.
+    wall_raw(&mut r, -30., 0., 6);
+    assert_eq!(r.dnd_state_name(), "leaving", "pressed-against-the-wall drag never left");
+}
+
 fn review_drag_corner_setup(os: Os, remote: bool, hosted: bool, left_portal: bool, detect: bool, depth: f64) -> Router {
     let mut l = Layout {
         screens: vec![

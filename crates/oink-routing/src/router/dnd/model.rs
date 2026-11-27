@@ -266,6 +266,135 @@ fn an_older_delivery_terminal_survives_a_newer_drag_announcement() {
 }
 
 #[test]
+fn release_onto_the_held_catcher_keeps_the_promise_for_the_remote_drop() {
+    let me = DeviceId([1; 32]);
+    let target = DeviceId([2; 32]);
+    let mut r = router(me, target, Os::Other);
+    let id = ClipId {
+        origin: me,
+        seq: DND_SEQ_BIT | 1,
+    };
+    let offer = Router::dnd_offer(id);
+    let local = Holder {
+        device: me,
+        epoch: 1,
+    };
+    let holder = Holder {
+        device: target,
+        epoch: 2,
+    };
+    let mut s = source::Source::new(offer, me, local);
+    assert!(s.handoff(local, holder));
+    s.ever_held = true;
+    r.dnd.sources.insert(offer, s);
+    r.dnd.native_source = Some(offer);
+    r.dnd_take_source_press(offer, me);
+    r.out.clear();
+    // The held catcher takes the user's release as an accepted native drop;
+    // no separated input UP ever reaches this router.
+    r.on_dnd_event(DndEvent::SourceEnded { id, accepted: true });
+    let kept = r.dnd.sources.get(&offer).expect("the promise outlives the native session");
+    assert_eq!(kept.phase, source::Phase::Released);
+    assert!(kept.native_closed());
+    assert!(
+        r.out.iter().any(|o| {
+            let Output::Send {
+                to,
+                msg: Message::Dnd(DndMsg::Notice(notice)),
+                ..
+            } = o
+            else {
+                return false;
+            };
+            matches!(
+                notice.state,
+                DragState::Released { holder: found, mode: SourceMode::Held } if found == holder
+            ) && *to == target
+        }),
+        "the holder must be told to complete its own drop"
+    );
+    assert!(
+        !r.out.iter().any(|o| matches!(o, Output::Dnd(DndCmd::ReleaseData { .. }))),
+        "release over the catcher is not a rejection; the data stays available"
+    );
+    // The host demand arrives after the native session is already over: it
+    // must serve the promise without submitting a finish that cannot happen.
+    r.out.clear();
+    r.dnd_source_action(target, offer, holder, SourceAction::StartDelivery, None);
+    assert_eq!(r.dnd.sources[&offer].phase, source::Phase::Receiving);
+    assert!(
+        !r.out.iter().any(|o| matches!(o, Output::Dnd(DndCmd::FinishSource { .. }))),
+        "a closed native source has no session left to finish"
+    );
+    assert!(r.on_dnd_delivery_receipt(
+        target,
+        oink_foundation::content::DeliveryId {
+            offer,
+            receiver: target,
+            sequence: 2
+        },
+        true
+    ));
+    assert!(r.dnd.sources.is_empty());
+    assert!(r.out.iter().any(|o| matches!(o,
+        Output::Send { msg: Message::Dnd(DndMsg::Notice(notice)), .. }
+            if notice.state == DragState::Ended { accepted: true }
+    )));
+    assert_eq!(
+        r.out
+            .iter()
+            .filter(|o| matches!(o, Output::Dnd(DndCmd::ReleaseData { id: found }) if *found == id))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn remote_cancel_after_the_catcher_release_closes_without_a_native_finish() {
+    let me = DeviceId([1; 32]);
+    let target = DeviceId([2; 32]);
+    let mut r = router(me, target, Os::Other);
+    let id = ClipId {
+        origin: me,
+        seq: DND_SEQ_BIT | 1,
+    };
+    let offer = Router::dnd_offer(id);
+    let local = Holder {
+        device: me,
+        epoch: 1,
+    };
+    let holder = Holder {
+        device: target,
+        epoch: 2,
+    };
+    let mut s = source::Source::new(offer, me, local);
+    assert!(s.handoff(local, holder));
+    r.dnd.sources.insert(offer, s);
+    r.dnd.native_source = Some(offer);
+    r.out.clear();
+    r.on_dnd_event(DndEvent::SourceEnded { id, accepted: true });
+    r.out.clear();
+    // The Windows drop found no target: the holder cancels what is left.
+    r.dnd_source_action(target, offer, holder, SourceAction::Cancel, None);
+    assert!(r.dnd.sources.is_empty());
+    assert_eq!(
+        r.out
+            .iter()
+            .filter(|o| matches!(o, Output::Dnd(DndCmd::FinishSource { .. })))
+            .count(),
+        0,
+        "the native session already ended accepted"
+    );
+    assert_eq!(
+        r.out
+            .iter()
+            .filter(|o| matches!(o, Output::Dnd(DndCmd::ReleaseData { id: found }) if *found == id))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn accepted_native_end_keeps_content_until_target_stored() {
     let me = DeviceId([1; 32]);
     let target = DeviceId([2; 32]);
