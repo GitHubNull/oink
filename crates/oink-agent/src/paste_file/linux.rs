@@ -1,6 +1,6 @@
 //! Nemo context-menu actions for Paste as File. Only a packaged layout
-//! (the `oink` binary beside `installed.json`) registers actions, mirroring
-//! the Windows rule; anything else removes our stale actions instead.
+//! (the sibling `oink` GUI beside `installed.json`) registers actions,
+//! mirroring the Windows rule; anything else removes our stale actions.
 use super::{language, title};
 use crate::config::Settings;
 use std::ffi::OsString;
@@ -15,7 +15,11 @@ pub(super) fn apply(exe: &Path, settings: &Settings) -> io::Result<()> {
 }
 
 fn apply_in(exe: &Path, settings: &Settings, dir: Option<&Path>) -> io::Result<()> {
-    if !packaged(exe) || !settings.paste_as_file {
+    // `exe` is the backend (`oink-backend`), which never owns the desktop
+    // entry. Nemo must launch the sibling GUI binary (`oink`) whose
+    // `--paste-as-file` dispatch runs before any window is created.
+    let ui = exe.with_file_name("oink");
+    if !packaged(&ui) || !settings.paste_as_file {
         if let Some(dir) = dir {
             remove_actions_from(dir)?;
         } else {
@@ -28,15 +32,17 @@ fn apply_in(exe: &Path, settings: &Settings, dir: Option<&Path>) -> io::Result<(
     };
     let language = language(settings.ui_language);
     std::fs::create_dir_all(dir)?;
-    write_action(&dir.join(ACTION), &action_contents(exe, language, false))?;
-    write_action(&dir.join(BACKGROUND_ACTION), &action_contents(exe, language, true))?;
+    write_action(&dir.join(ACTION), &action_contents(&ui, language, false))?;
+    write_action(&dir.join(BACKGROUND_ACTION), &action_contents(&ui, language, true))?;
     Ok(())
 }
 
-/// The packaged app binary is always named `oink`; a build tree or the
-/// service binary must never register desktop actions.
+/// The packaged GUI binary is always named `oink` and carries the install
+/// marker; a build tree or the backend binary must never register actions.
 fn packaged(exe: &Path) -> bool {
-    exe.file_name().is_some_and(|name| name == "oink") && exe.with_file_name("installed.json").is_file()
+    exe.file_name().is_some_and(|name| name == "oink")
+        && exe.is_file()
+        && exe.with_file_name("installed.json").is_file()
 }
 
 fn actions_dir() -> io::Result<PathBuf> {
@@ -132,19 +138,70 @@ mod tests {
     }
 
     #[test]
+    fn backend_registers_actions_that_launch_the_sibling_ui() {
+        let root = tempfile::tempdir().unwrap();
+        let ui = root.path().join("oink");
+        let backend = root.path().join("oink-backend");
+        std::fs::write(&ui, b"").unwrap();
+        std::fs::write(&backend, b"").unwrap();
+        std::fs::write(root.path().join("installed.json"), b"{}").unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let actions = data.path().join("nemo/actions");
+        apply_in(
+            &backend,
+            &settings(true, crate::config::UiLanguage::Auto),
+            Some(&actions),
+        )
+        .unwrap();
+        let item = std::fs::read_to_string(actions.join(ACTION)).unwrap();
+        assert!(
+            item.contains(&format!("Exec=\"{}\" --paste-as-file %f", ui.display())),
+            "{item}"
+        );
+        let background = std::fs::read_to_string(actions.join(BACKGROUND_ACTION)).unwrap();
+        assert!(
+            background.contains(&format!("Exec=\"{}\" --paste-as-file %P", ui.display())),
+            "{background}"
+        );
+    }
+
+    #[test]
+    fn installed_marker_without_ui_entry_removes_actions() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = root.path().join("oink-backend");
+        std::fs::write(&backend, b"").unwrap();
+        std::fs::write(root.path().join("installed.json"), b"{}").unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let actions = data.path().join("nemo/actions");
+        std::fs::create_dir_all(&actions).unwrap();
+        std::fs::write(actions.join(ACTION), b"stale").unwrap();
+        std::fs::write(actions.join(BACKGROUND_ACTION), b"stale").unwrap();
+        apply_in(
+            &backend,
+            &settings(true, crate::config::UiLanguage::Auto),
+            Some(&actions),
+        )
+        .unwrap();
+        assert!(!actions.join(ACTION).exists());
+        assert!(!actions.join(BACKGROUND_ACTION).exists());
+    }
+
+    #[test]
     fn apply_writes_and_removes_both_actions() {
         let root = tempfile::tempdir().unwrap();
-        let exe = root.path().join("oink");
-        std::fs::write(&exe, b"").unwrap();
+        let ui = root.path().join("oink");
+        let backend = root.path().join("oink-backend");
+        std::fs::write(&ui, b"").unwrap();
+        std::fs::write(&backend, b"").unwrap();
         std::fs::write(root.path().join("installed.json"), b"{}").unwrap();
         let data = tempfile::tempdir().unwrap();
         let actions = data.path().join("nemo/actions");
         let enabled = settings(true, crate::config::UiLanguage::Auto);
-        apply_in(&exe, &enabled, Some(&actions)).unwrap();
+        apply_in(&backend, &enabled, Some(&actions)).unwrap();
         assert!(actions.join(ACTION).is_file());
         assert!(actions.join(BACKGROUND_ACTION).is_file());
         let disabled = settings(false, crate::config::UiLanguage::Auto);
-        apply_in(&exe, &disabled, Some(&actions)).unwrap();
+        apply_in(&backend, &disabled, Some(&actions)).unwrap();
         assert!(!actions.join(ACTION).exists());
         assert!(!actions.join(BACKGROUND_ACTION).exists());
     }
