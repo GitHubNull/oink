@@ -1558,6 +1558,9 @@ impl Router {
     }
 
     /// Escape cancels only while the original pointer button is still held.
+    /// The local keyboard may cancel a drag it hosts from a peer: the input
+    /// device of that drag is the peer, so matching `input` alone would let
+    /// Escape fall through to the local desktop while the remote drag stays.
     pub(super) fn dnd_escape(&mut self, input: DeviceId) -> bool {
         // Native completion is asynchronous on macOS (observed with QuickTime
         // on macOS 14). Physical release has already committed the user's drop;
@@ -1566,12 +1569,13 @@ impl Router {
         if self.dnd_drop_released() {
             return true;
         }
-        if self.dnd.pending.as_ref().is_some_and(|p| p.input == input) {
+        let local = input == self.me();
+        if self.dnd.pending.as_ref().is_some_and(|p| p.input == input || local) {
             self.dnd_cancel_pending();
             return true;
         }
         match &self.dnd.state {
-            State::Hosting { input: i, .. } if *i == input => {
+            State::Hosting { input: i, .. } if *i == input || local => {
                 tracing::info!(?input, "Esc during a drag: cancelling it");
                 self.dnd_cancel_hosting();
                 true
@@ -3130,6 +3134,56 @@ mod connection_tests {
             );
         }
     }
+    #[test]
+    fn local_escape_cancels_a_hosted_remote_drag() {
+        let (mut r, peer, id) = preview_wait();
+        assert!(matches!(r.dnd.state, State::Hosting { id: active, .. } if active == id));
+        r.out.clear();
+        assert!(
+            r.dnd_escape(r.me()),
+            "the local keyboard must cancel a drag hosted from a peer"
+        );
+        assert!(!matches!(r.dnd.state, State::Hosting { .. }));
+        assert!(r.dnd.target.is_none());
+        assert_eq!(
+            r.out
+                .iter()
+                .filter(|o| matches!(o, Output::Dnd(DndCmd::Cancel { id: cid, .. }) if *cid == id))
+                .count(),
+            1
+        );
+        assert_eq!(
+            r.out
+                .iter()
+                .filter(|o| matches!(o, Output::Send { to, msg: Message::Dnd(DndMsg::Source { offer, action: SourceAction::Cancel, .. }), .. } if *to == peer && offer.clip == id))
+                .count(),
+            1,
+            "the remote source must be told to cancel"
+        );
+        assert!(
+            !r.held
+                .get(&peer)
+                .is_some_and(|h| h.buttons.contains(&MouseButton::Left)),
+            "the silently held remote button must be released"
+        );
+    }
+
+    #[test]
+    fn local_escape_cancels_a_pending_remote_drag() {
+        let (mut r, peer, id) = target_setup(true);
+        assert!(r.dnd.pending.as_ref().is_some_and(|p| p.id == id));
+        r.out.clear();
+        assert!(r.dnd_escape(r.me()));
+        assert!(r.dnd.pending.is_none());
+        assert_eq!(
+            r.out
+                .iter()
+                .filter(|o| matches!(o, Output::Send { to, msg: Message::Dnd(DndMsg::Source { offer, action: SourceAction::Cancel, .. }), .. } if *to == peer && offer.clip == id))
+                .count(),
+            1
+        );
+    }
+
     fn preview_image(width: f64) -> DragImage {
         let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
         png.extend_from_slice(&1_u32.to_be_bytes());
