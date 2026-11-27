@@ -275,10 +275,7 @@ fn release_onto_the_held_catcher_keeps_the_promise_for_the_remote_drop() {
         seq: DND_SEQ_BIT | 1,
     };
     let offer = Router::dnd_offer(id);
-    let local = Holder {
-        device: me,
-        epoch: 1,
-    };
+    let local = Holder { device: me, epoch: 1 };
     let holder = Holder {
         device: target,
         epoch: 2,
@@ -293,7 +290,11 @@ fn release_onto_the_held_catcher_keeps_the_promise_for_the_remote_drop() {
     // The held catcher takes the user's release as an accepted native drop;
     // no separated input UP ever reaches this router.
     r.on_dnd_event(DndEvent::SourceEnded { id, accepted: true });
-    let kept = r.dnd.sources.get(&offer).expect("the promise outlives the native session");
+    let kept = r
+        .dnd
+        .sources
+        .get(&offer)
+        .expect("the promise outlives the native session");
     assert_eq!(kept.phase, source::Phase::Released);
     assert!(kept.native_closed());
     assert!(
@@ -314,7 +315,9 @@ fn release_onto_the_held_catcher_keeps_the_promise_for_the_remote_drop() {
         "the holder must be told to complete its own drop"
     );
     assert!(
-        !r.out.iter().any(|o| matches!(o, Output::Dnd(DndCmd::ReleaseData { .. }))),
+        !r.out
+            .iter()
+            .any(|o| matches!(o, Output::Dnd(DndCmd::ReleaseData { .. }))),
         "release over the catcher is not a rejection; the data stays available"
     );
     // The host demand arrives after the native session is already over: it
@@ -323,7 +326,9 @@ fn release_onto_the_held_catcher_keeps_the_promise_for_the_remote_drop() {
     r.dnd_source_action(target, offer, holder, SourceAction::StartDelivery, None);
     assert_eq!(r.dnd.sources[&offer].phase, source::Phase::Receiving);
     assert!(
-        !r.out.iter().any(|o| matches!(o, Output::Dnd(DndCmd::FinishSource { .. }))),
+        !r.out
+            .iter()
+            .any(|o| matches!(o, Output::Dnd(DndCmd::FinishSource { .. }))),
         "a closed native source has no session left to finish"
     );
     assert!(r.on_dnd_delivery_receipt(
@@ -359,10 +364,7 @@ fn remote_cancel_after_the_catcher_release_closes_without_a_native_finish() {
         seq: DND_SEQ_BIT | 1,
     };
     let offer = Router::dnd_offer(id);
-    let local = Holder {
-        device: me,
-        epoch: 1,
-    };
+    let local = Holder { device: me, epoch: 1 };
     let holder = Holder {
         device: target,
         epoch: 2,

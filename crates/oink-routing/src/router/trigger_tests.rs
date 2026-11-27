@@ -702,7 +702,11 @@ fn wall_pinned_raw_push_completes_a_native_drag_handoff() {
     // The device keeps pushing into the clamped edge: the same gesture now
     // crosses and the native drag is handed over.
     wall_raw(&mut r, -30., 0., 6);
-    assert_eq!(r.dnd_state_name(), "leaving", "pressed-against-the-wall drag never left");
+    assert_eq!(
+        r.dnd_state_name(),
+        "leaving",
+        "pressed-against-the-wall drag never left"
+    );
 }
 
 fn review_drag_corner_setup(os: Os, remote: bool, hosted: bool, left_portal: bool, detect: bool, depth: f64) -> Router {
